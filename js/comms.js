@@ -53,11 +53,13 @@ export function createComms({ feedEl, speechLayerEl, agents, onBubbleClick }) {
       a.bubbleKind || "",
       a.stickyBubble ? "1" : "0",
       a.bubbleAction || "",
+      a.bubbleExpanded ? "1" : "0",
     ].join("|");
   }
 
   function buildBubbleEl(a) {
     const isCheck = a.bubbleKind === "check";
+    const isWaiting = a.bubbleKind === "waiting";
     const clickable = Boolean(a.stickyBubble && a.bubbleAction);
     const el = document.createElement("div");
     el.dataset.agentId = a.id;
@@ -65,20 +67,28 @@ export function createComms({ feedEl, speechLayerEl, agents, onBubbleClick }) {
       "speech-bubble",
       clickable ? "speech-bubble--clickable" : "",
       isCheck ? "speech-bubble--check" : "",
+      isWaiting ? "speech-bubble--waiting" : "",
+      isWaiting && !a.bubbleExpanded ? "is-collapsed" : "",
     ]
       .filter(Boolean)
       .join(" ");
 
-    if (isCheck) {
+    if (isCheck || isWaiting) {
       const mark = document.createElement("span");
-      mark.className = "speech-bubble__check";
-      mark.textContent = "✓";
+      mark.className = isWaiting
+        ? "speech-bubble__dot"
+        : "speech-bubble__check";
+      mark.textContent = isWaiting ? "" : "✓";
       mark.setAttribute("aria-hidden", "true");
       const text = document.createElement("span");
       text.className = "speech-bubble__text";
-      text.textContent = a.bubble;
+      text.textContent = a.bubbleExpanded
+        ? a.bubble
+        : isWaiting
+          ? "waiting…"
+          : a.bubble;
       el.append(mark, text);
-      if (clickable) {
+      if (isCheck && clickable) {
         const dismiss = document.createElement("button");
         dismiss.type = "button";
         dismiss.className = "speech-bubble__dismiss";
@@ -97,9 +107,13 @@ export function createComms({ feedEl, speechLayerEl, agents, onBubbleClick }) {
     }
 
     if (clickable) {
-      el.title = isCheck
-        ? "Click to reply to the board · × to dismiss"
-        : "Click to respond to the board";
+      el.title = isWaiting
+        ? a.bubbleExpanded
+          ? "Click to collapse"
+          : "Click to show task"
+        : isCheck
+          ? "Click to reply to the board · × to dismiss"
+          : "Click to respond to the board";
       el.setAttribute("role", "button");
       el.tabIndex = 0;
       const fire = (ev) => {
@@ -240,7 +254,13 @@ export function renderRoster(listEl, agents, swatchDataUrl, avatarStyle = "minec
     status.dataset.status = a.status;
     status.textContent = a.status;
 
-    meta.append(role, profile, dept, desc, org, status);
+    const work = document.createElement("span");
+    work.className = "roster__work";
+    work.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("i");
+    work.appendChild(fill);
+
+    meta.append(role, profile, dept, desc, org, status, work);
     li.append(img, meta);
     listEl.appendChild(li);
   });
@@ -254,5 +274,7 @@ export function syncRosterStatus(listEl, agents) {
       status.dataset.status = a.status;
       status.textContent = a.status;
     }
+    const deskWork = a.roleKind === "executor" && a.status === "working";
+    status.closest(".roster__item")?.classList.toggle("is-desk-working", deskWork);
   }
 }

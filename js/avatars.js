@@ -29,7 +29,7 @@ export const AVATAR_STYLES = [
 ];
 
 /** Tiny on the floor so walls/desks dominate (1TNT scale) */
-export const AVATAR_SIZE = 0.68;
+export const AVATAR_SIZE = 1.15;
 
 /** Art pixel size — higher = chunkier, clearer shapes */
 const PX = 2;
@@ -646,6 +646,13 @@ function drawAlien(ctx, a, px, py, footY) {
   return { x: px, y: py - 40 };
 }
 
+export function isAtOwnDesk(a) {
+  if (!a || (a.path && a.path.length)) return false;
+  const home = a.home;
+  if (!Array.isArray(home)) return false;
+  return Math.abs(a.col - home[0]) < 0.28 && Math.abs(a.row - home[1]) < 0.28;
+}
+
 export function drawAvatarSprite(ctx, a, office, styleId, index = 0) {
   const { x, y } = office.screenOf(a.col, a.row);
   const style = styleId || "robot";
@@ -656,9 +663,16 @@ export function drawAvatarSprite(ctx, a, office, styleId, index = 0) {
         ? AVATAR_SIZE * 0.95
         : AVATAR_SIZE;
   const s = (office.avatarScale || 1) * sizeMul;
-  const bobY = Math.sin(a.bob) * 1.0 * s;
-  const px = Math.round(x);
-  const py = Math.round(y - 10 * s + bobY);
+  const seated = isAtOwnDesk(a);
+  const reporting = a.status === "reporting";
+  const moving = Boolean(a.path?.length);
+  const active = a.status === "working" || a.status === "talking" || reporting || moving;
+  const deskWork = seated && active;
+  const sway = deskWork ? Math.sin((a.workMs || 0) * 0.01) * 1.2 * s : 0;
+  const bobY = active ? Math.sin(a.bob) * 1.6 * s : Math.sin(a.bob) * 0.35 * s;
+  const seat = seated && office.seatPoint ? office.seatPoint(a.col, a.row) : null;
+  const px = Math.round((seat ? seat.x : x) + sway);
+  const py = Math.round((seat ? seat.y : y - 8 * s) + bobY);
   const footY = 14;
 
   ctx.save();
@@ -687,10 +701,66 @@ export function drawAvatarSprite(ctx, a, office, styleId, index = 0) {
   }
   ctx.restore();
 
+  const headY = py + (local?.y || -36) * s;
+  if (active) {
+    drawWorkMark(ctx, px, headY + 28 * s, s);
+    if (reporting) drawReportTag(ctx, px, headY - 8);
+  } else if (seated && a.status === "idle" && !moving && !office._live) {
+    drawIdleZzz(ctx, px + 8, headY - 4, a.bob);
+  }
+
   return {
     x: px + (local?.x || 0) * s,
     y: py + (local?.y || -36) * s,
   };
+}
+
+/** Green antenna + floor glow — the 1TNT "working" mark. */
+function drawWorkMark(ctx, px, py, s) {
+  ctx.save();
+  ctx.fillStyle = "rgba(54, 224, 143, 0.22)";
+  ctx.beginPath();
+  ctx.ellipse(px, py + 6 * s, 16 * s, 7 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#36e08f";
+  ctx.lineWidth = Math.max(1.5, 1.6 * s);
+  ctx.beginPath();
+  ctx.moveTo(px, py - 34 * s);
+  ctx.lineTo(px, py - 46 * s);
+  ctx.stroke();
+  ctx.shadowColor = "#36e08f";
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = "#9ef0c4";
+  ctx.beginPath();
+  ctx.arc(px, py - 48 * s, Math.max(2.4, 3 * s), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawReportTag(ctx, x, y) {
+  ctx.save();
+  ctx.font = "700 11px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#14532d";
+  ctx.fillText("reporting", x, y);
+  ctx.restore();
+}
+
+/** Floating zzz for anyone standing idle at their desk. */
+function drawIdleZzz(ctx, x, y, bob) {
+  ctx.save();
+  ctx.font = "700 12px sans-serif";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  for (let i = 0; i < 3; i++) {
+    const phase = (bob * 0.12 + i * 0.34) % 1;
+    ctx.globalAlpha = phase < 0.15 ? phase / 0.15 : phase > 0.75 ? (1 - phase) / 0.25 : 0.85;
+    ctx.fillStyle = "#7a7266";
+    const size = 10 + i * 2;
+    ctx.font = `700 ${size}px sans-serif`;
+    ctx.fillText("z", x + i * 5 + phase * 4, y - i * 7 - phase * 6);
+  }
+  ctx.restore();
 }
 
 export function swatchForStyle(skin, hair, styleId, index = 0) {

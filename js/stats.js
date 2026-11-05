@@ -15,7 +15,7 @@ function formatTime(ts) {
   }
 }
 
-export function createStats(template) {
+export function createStats(template, { onRecord = null } = {}) {
   const byAgent = Object.fromEntries(
     template.roles.map((r) => [
       r.id,
@@ -160,6 +160,11 @@ export function createStats(template) {
     };
     history.unshift(entry);
     if (history.length > 80) history.length = 80;
+    try {
+      onRecord?.();
+    } catch {
+      /* persistence hook must not break runs */
+    }
     return entry;
   }
 
@@ -175,6 +180,53 @@ export function createStats(template) {
       row.tokensIn = 0;
       row.tokensOut = 0;
       row.tasks = 0;
+    }
+  }
+
+  /** Serializable state for refresh-safe persistence. */
+  function snapshot() {
+    const agentUsage = {};
+    for (const [id, row] of Object.entries(byAgent)) {
+      agentUsage[id] = {
+        calls: row.calls,
+        tokensIn: row.tokensIn,
+        tokensOut: row.tokensOut,
+        tasks: row.tasks,
+      };
+    }
+    return {
+      seq,
+      session: { ...session },
+      agentUsage,
+      // newest-first, capped at 80 — full prompt/reply kept for the detail view
+      calls: history.slice(0, 80),
+    };
+  }
+
+  function restore(saved) {
+    if (!saved || !Array.isArray(saved.calls)) return;
+    if (Number.isFinite(saved.seq)) seq = Math.max(seq, Number(saved.seq));
+    for (const entry of saved.calls) {
+      if (entry && Number.isFinite(entry.id) && !history.some((h) => h.id === entry.id)) {
+        history.push(entry);
+      }
+    }
+    history.sort((a, b) => b.id - a.id);
+    if (history.length > 80) history.length = 80;
+    if (saved.session) {
+      for (const k of Object.keys(session)) {
+        if (Number.isFinite(saved.session[k])) session[k] = saved.session[k];
+      }
+    }
+    if (saved.agentUsage) {
+      for (const [id, usage] of Object.entries(saved.agentUsage)) {
+        const row = byAgent[id];
+        if (!row) continue;
+        row.calls = usage.calls || 0;
+        row.tokensIn = usage.tokensIn || 0;
+        row.tokensOut = usage.tokensOut || 0;
+        row.tasks = usage.tasks || 0;
+      }
     }
   }
 
@@ -388,6 +440,8 @@ export function createStats(template) {
     reset,
     rebuild,
     syncRoleMeta,
+    snapshot,
+    restore,
     renderSession,
     renderUsage,
     renderHistory,

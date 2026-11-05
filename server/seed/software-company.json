@@ -1,6 +1,10 @@
 {
   "id": "software-company",
   "name": "Software Company",
+  "seedRevision": 6,
+  "seedRefresh": ["qa", "cto", "swe", "swe-2", "architect"],
+  "seedAdds": ["designer", "frontend"],
+  "seedRemoves": ["coo"],
   "orchestratorRoleId": "ceo",
   "rooms": [
     {
@@ -14,7 +18,7 @@
       "id": "leadership",
       "label": "Leadership",
       "origin": [6, 1],
-      "size": [5, 3],
+      "size": [3, 3],
       "floor": "#e4dccf"
     },
     {
@@ -23,16 +27,24 @@
       "origin": [1, 5],
       "size": [10, 5],
       "floor": "#ddd8cf"
+    },
+    {
+      "id": "design-studio",
+      "label": "Design Studio",
+      "origin": [1, 11],
+      "size": [8, 3],
+      "floor": "#e7dff0"
     }
   ],
   "desks": [
     { "id": "desk-ceo", "room": "ceo-suite", "tile": [2, 2] },
     { "id": "desk-cto", "room": "leadership", "tile": [7, 2] },
-    { "id": "desk-coo", "room": "leadership", "tile": [9, 2] },
     { "id": "desk-swe", "room": "eng-bay", "tile": [2, 7] },
     { "id": "desk-swe-2", "room": "eng-bay", "tile": [4, 7] },
     { "id": "desk-arch", "room": "eng-bay", "tile": [6, 7] },
-    { "id": "desk-qa", "room": "eng-bay", "tile": [8, 7] }
+    { "id": "desk-qa", "room": "eng-bay", "tile": [8, 7] },
+    { "id": "desk-designer", "room": "design-studio", "tile": [2, 12] },
+    { "id": "desk-frontend", "room": "design-studio", "tile": [5, 12] }
   ],
   "roles": [
     {
@@ -58,21 +70,7 @@
       "hair": "#37474f",
       "desk": "desk-cto",
       "home": [7, 2],
-      "description": "Owns technical strategy, stack choices, and engineering standards.",
-      "takesOrdersFrom": "ceo",
-      "reportsTo": "ceo",
-      "roleKind": "manager"
-    },
-    {
-      "id": "coo",
-      "title": "COO",
-      "department": "Leadership",
-      "hermesProfile": "default",
-      "skin": "#ef6c00",
-      "hair": "#4e342e",
-      "desk": "desk-coo",
-      "home": [9, 2],
-      "description": "Runs delivery rhythm, hiring ops, and cross-team process.",
+      "description": "Owns technical strategy and engineering standards. Before closing work, finds leftover servers or listeners the team started and makes sure they are stopped. Double-checks the engineers did the same.",
       "takesOrdersFrom": "ceo",
       "reportsTo": "ceo",
       "roleKind": "manager"
@@ -86,7 +84,7 @@
       "hair": "#1b5e20",
       "desk": "desk-swe",
       "home": [2, 7],
-      "description": "Implements features, fixes bugs, and ships working code.",
+      "description": "Implements features, fixes bugs, and ships working code. Stops any process they started (node servers, listeners, watchers) and double-checks nothing is still running.",
       "takesOrdersFrom": "cto",
       "reportsTo": "qa",
       "roleKind": "executor"
@@ -100,7 +98,7 @@
       "hair": "#1b5e20",
       "desk": "desk-swe-2",
       "home": [4, 7],
-      "description": "Owns services, refactors, and pairs on delivery with the other engineers.",
+      "description": "Owns services and pairs on delivery. Stops leftover processes from this work and double-checks ports and listeners are clear.",
       "takesOrdersFrom": "cto",
       "reportsTo": "qa",
       "roleKind": "executor"
@@ -114,7 +112,35 @@
       "hair": "#263238",
       "desk": "desk-arch",
       "home": [6, 7],
-      "description": "Designs system shape, boundaries, and long-term technical structure.",
+      "description": "Designs architecture, data sources, and tech choices for delivery. Works as a normal executor — the CTO sequences work with kanban dependencies when architecture must land first.",
+      "takesOrdersFrom": "cto",
+      "reportsTo": "qa",
+      "roleKind": "executor"
+    },
+    {
+      "id": "designer",
+      "title": "UI Designer",
+      "department": "Design",
+      "hermesProfile": "default",
+      "skin": "#8e24aa",
+      "hair": "#4a148c",
+      "desk": "desk-designer",
+      "home": [2, 12],
+      "description": "Owns the UI: layout, visual hierarchy, components, and interaction. Hands frontend specs they can build in HTML and CSS.",
+      "takesOrdersFrom": "cto",
+      "reportsTo": "qa",
+      "roleKind": "executor"
+    },
+    {
+      "id": "frontend",
+      "title": "Frontend Developer",
+      "department": "Engineering",
+      "hermesProfile": "default",
+      "skin": "#00897b",
+      "hair": "#004d40",
+      "desk": "desk-frontend",
+      "home": [5, 12],
+      "description": "Builds the interface in TypeScript, JavaScript, HTML, and CSS. Turns UI specs into working, accessible screens.",
       "takesOrdersFrom": "cto",
       "reportsTo": "qa",
       "roleKind": "executor"
@@ -128,7 +154,7 @@
       "hair": "#004d40",
       "desk": "desk-qa",
       "home": [8, 7],
-      "description": "Defines acceptance criteria, finds regressions, and gates releases.",
+      "description": "QC gate before the manager closes work. Checks README and other docs, names the data sources, and rejects code that is not readable, tested, or safe to run.",
       "takesOrdersFrom": "cto",
       "reportsTo": "cto",
       "roleKind": "evaluator"

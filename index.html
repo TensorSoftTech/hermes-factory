@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="css/office.css" />
+  <link rel="stylesheet" href="css/office.css?v=gate-allow-1" />
 </head>
 <body>
   <main id="factory" class="factory">
@@ -27,6 +27,8 @@
       </div>
       <div class="factory__actions">
         <span id="factory-busy" class="factory__busy" hidden>Hermes running…</span>
+        <button type="button" id="btn-change-course" class="btn-ghost" title="Stop and remove the current task, clear kanban, unlock the dock">Stop &amp; remove</button>
+        <button type="button" id="btn-delivered" class="btn-ghost" title="Task history — running and delivered">History</button>
         <button type="button" id="btn-settings" class="btn-ghost" onclick="window.hermesFactoryOpenSettings && window.hermesFactoryOpenSettings()">Settings</button>
       </div>
     </header>
@@ -48,8 +50,13 @@
       </aside>
 
       <section class="office-stage" aria-label="Factory office">
+        <div class="view-toggle" id="view-toggle" role="tablist" aria-label="Stage view">
+          <button type="button" class="view-toggle__btn is-active" data-view="office" role="tab" aria-selected="true" title="Isometric office view">Office</button>
+          <button type="button" class="view-toggle__btn" data-view="graph" role="tab" aria-selected="false" title="Org graph view">Graph</button>
+        </div>
         <div class="office-scroll">
           <canvas id="office-canvas" width="960" height="780"></canvas>
+          <div id="office-graph" class="office-graph" hidden></div>
           <div id="speech-layer" class="speech-layer" aria-hidden="true"></div>
           <aside id="employee-card" class="employee-card" hidden>
             <header class="employee-card__head">
@@ -199,6 +206,52 @@
     </div>
   </div>
 
+  <div id="kanban-overlay" class="kanban-overlay" hidden aria-hidden="true">
+    <div class="kanban" role="dialog" aria-modal="true" aria-labelledby="kanban-title">
+      <header class="kanban__head">
+        <div>
+          <h2 id="kanban-title" class="kanban__title">Kanban</h2>
+          <p class="kanban__hint">Pick a manager. One main board card, then smaller subtasks with optional dependencies. Blocked cards unlock when their deps are done.</p>
+        </div>
+        <label class="kanban__pick">Manager
+          <select data-kanban-manager></select>
+        </label>
+        <div class="kanban__actions">
+          <button type="button" class="btn-ghost" data-kanban-clear title="Remove cards for this manager">Clear this</button>
+          <button type="button" class="btn-ghost" data-kanban-clear-all title="Stop and remove the task, wipe every card, unlock a new order">Stop &amp; remove</button>
+          <button type="button" class="btn-ghost" data-kanban-close>Close</button>
+        </div>
+      </header>
+      <div class="kanban__add">
+        <input data-kanban-title class="settings__input" type="text" maxlength="180" placeholder="New task for this manager's team" />
+        <select data-kanban-assignee></select>
+        <button type="button" class="btn-cta btn-cta--sm" data-kanban-add>Add</button>
+      </div>
+      <div class="kanban-legacy" data-kanban-hermes-legacy hidden>
+        <div class="kanban-legacy__head">
+          <strong class="kanban-legacy__title">Hermes Agent tasks still open</strong>
+          <span class="kanban-legacy__hint">Not this factory board — leftover t_* workers (often default/Nous)</span>
+          <button type="button" class="btn-ghost btn-ghost--sm" data-kanban-hermes-refresh>Refresh</button>
+          <button type="button" class="btn-ghost btn-ghost--sm" data-kanban-hermes-clear title="Archive/cancel leftover Hermes Agent t_* tasks">Clear leftovers</button>
+        </div>
+        <ul class="kanban-legacy__list" data-kanban-hermes-list></ul>
+      </div>
+      <div class="kanban__board" data-kanban-body></div>
+    </div>
+  </div>
+
+  <div id="delivered-overlay" class="delivered-overlay" aria-hidden="true">
+    <div class="delivered" role="dialog" aria-modal="true" aria-labelledby="delivered-title">
+      <header class="delivered__head">
+        <h2 id="delivered-title" class="delivered__title">Task history</h2>
+        <button type="button" id="delivered-close" class="btn-ghost">Close</button>
+      </header>
+      <p class="delivered__hint">Open tasks come back after a refresh. Delivered ones stay on disk.</p>
+      <div id="delivered-running" class="delivered__running" hidden></div>
+      <ol id="delivered-list" class="delivered__list"></ol>
+    </div>
+  </div>
+
   <div id="call-overlay" class="call-overlay" aria-hidden="true">
     <div class="call-detail" role="dialog" aria-modal="true" aria-labelledby="call-detail-title">
       <header class="call-detail__head">
@@ -247,6 +300,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/app.js?v=bubble-click-4"></script>
+  <script type="module" src="js/app.js?v=gate-allow-1"></script>
 </body>
 </html>

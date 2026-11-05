@@ -79,11 +79,12 @@ export async function deleteTemplate(id) {
  *                              ↑________________________|
  *
  * Edges (who may talk to whom):
- * - orchestrator ↔ board (user), orchestrator → managers, managers → orchestrator
- * - manager → executor (assign work) OR manager → orchestrator (report up)
- * - executor → order-giver (takesOrdersFrom) at intervals while working
- * - executor → evaluator (forced QC handoff when ready)
- * - evaluator → manager (validate + recommend; manager decides next)
+ * - orchestrator calls every manager to the kanban table, then assigns one board
+ * - managers under the orchestrator may collaborate with each other
+ * - manager → executor (distribute on that manager's kanban) OR report up
+ * - executors under the same manager may collaborate and add tasks on that kanban
+ * - executor → order-giver while working, then evaluator, then manager
+ * - evaluator → manager
  */
 export const ROLE_KINDS = [
   {
@@ -105,7 +106,7 @@ export const ROLE_KINDS = [
   {
     id: "evaluator",
     name: "Evaluator",
-    blurb: "QC / QA — between executor and manager; then manager chooses again.",
+    blurb: "QC: docs, data sources, and code quality, then back to the manager.",
   },
 ];
 
@@ -114,9 +115,9 @@ export const ROLE_KIND_IDS = ROLE_KINDS.map((k) => k.id);
 /** Allowed next kinds from a node (graph theory view). */
 export const ROLE_KIND_EDGES = {
   orchestrator: ["manager", "board"],
-  manager: ["executor", "orchestrator"],
-  /** Progress → order-giver (manager); finish → evaluator */
-  executor: ["manager", "evaluator"],
+  manager: ["executor", "orchestrator", "manager"],
+  /** Progress → order-giver; peers under the same manager; finish → evaluator */
+  executor: ["manager", "evaluator", "executor"],
   evaluator: ["manager"],
   board: ["orchestrator"],
 };
@@ -266,8 +267,18 @@ export function applySettingsToTemplate(template, settings, profiles = []) {
   });
   const roles = (base.roles || []).map((role) => {
     const ov = roleProfiles[role.id] || {};
-    const hermesProfile =
-      ov.hermesProfile || role.hermesProfile || settings?.parentProfile || "default";
+    const candidates = [
+      ov.hermesProfile,
+      role.hermesProfile,
+      settings?.parentProfile,
+      "default",
+    ].filter(Boolean);
+    // Prefer a spawnable profile — never leave a role-id (swe/designer/…) as hermesProfile
+    let hermesProfile =
+      candidates.find((id) => byId[id]) ||
+      candidates.find((id) => id === "default") ||
+      candidates[0] ||
+      "default";
     const live = byId[hermesProfile];
     return {
       ...role,

@@ -2,10 +2,11 @@
 
 import {
   drawAvatarSprite,
+  isAtOwnDesk,
   swatchForStyle,
   dinoKindForIndex,
   AVATAR_SIZE,
-} from "./avatars.js?v=bubble-click-4";
+} from "./avatars.js?v=avatar-bigger";
 
 export function createAgents(template, { avatarStyle = "robot" } = {}) {
   const agents = template.roles.map((role, index) => {
@@ -38,7 +39,10 @@ export function createAgents(template, { avatarStyle = "robot" } = {}) {
       stickyBubble: false,
       bubbleAction: null,
       bubbleKind: null,
+      bubbleDetail: null,
+      bubbleExpanded: false,
       bob: Math.random() * Math.PI * 2,
+      workMs: 0,
       _index: index,
     };
   });
@@ -73,7 +77,8 @@ export function createAgents(template, { avatarStyle = "robot" } = {}) {
     a.path = office.pathBetween(from, dest);
     a.progress = 0;
     if (a.path.length) {
-      a.status = a.status === "talking" ? "talking" : "working";
+      a.status =
+        a.status === "talking" || a.status === "reporting" ? a.status : "working";
     }
   }
 
@@ -85,11 +90,13 @@ export function createAgents(template, { avatarStyle = "robot" } = {}) {
     a.stickyBubble = false;
     a.bubbleAction = null;
     a.bubbleKind = null;
+    a.bubbleDetail = null;
+    a.bubbleExpanded = false;
     a.status = "talking";
   }
 
   /** Persistent clickable bubble (e.g. green check → respond to board) */
-  function saySticky(id, text, action = null, kind = null) {
+  function saySticky(id, text, action = null, kind = null, detail = null) {
     const a = byId(id);
     if (!a) return;
     a.bubble = text;
@@ -97,7 +104,20 @@ export function createAgents(template, { avatarStyle = "robot" } = {}) {
     a.stickyBubble = true;
     a.bubbleAction = action;
     a.bubbleKind = kind;
+    a.bubbleDetail = detail != null ? String(detail) : null;
+    a.bubbleExpanded = false;
     a.status = "talking";
+  }
+
+  /** Toggle waiting bubble: collapsed "waiting…" ↔ full task text. */
+  function toggleWaitingBubble(id) {
+    const a = byId(id);
+    if (!a || a.bubbleKind !== "waiting") return false;
+    a.bubbleExpanded = !a.bubbleExpanded;
+    a.bubble = a.bubbleExpanded
+      ? String(a.bubbleDetail || a.bubble || "waiting…").slice(0, 160)
+      : "waiting…";
+    return true;
   }
 
   function clearBubble(id) {
@@ -108,13 +128,20 @@ export function createAgents(template, { avatarStyle = "robot" } = {}) {
     a.stickyBubble = false;
     a.bubbleAction = null;
     a.bubbleKind = null;
+    a.bubbleDetail = null;
+    a.bubbleExpanded = false;
     if (a.status === "talking") a.status = a.path.length ? "working" : "idle";
   }
 
   function update(dt) {
     const now = performance.now();
     for (const a of agents) {
-      a.bob += dt * 0.004;
+      const deskWork =
+        a.roleKind === "executor" && a.status === "working" && !a.path.length;
+      // Executors at the desk type in place — faster bob, not a walk.
+      a.bob += dt * (deskWork ? 0.014 : 0.004);
+      if (deskWork) a.workMs = (a.workMs || 0) + dt;
+      else if (a.status !== "working") a.workMs = 0;
       if (a.bubble && !a.stickyBubble && now > a.bubbleUntil) clearBubble(a.id);
 
       if (!a.path.length) continue;
@@ -136,10 +163,20 @@ export function createAgents(template, { avatarStyle = "robot" } = {}) {
     }
   }
 
-  function drawAll(ctx, office) {
+  function drawAll(ctx, office, mode = "all") {
     const sorted = [...agents].sort((a, b) => a.col + a.row - (b.col + b.row));
     const anchors = {};
+    office._live = agents.some(
+      (a) =>
+        a.status === "working" ||
+        a.status === "reporting" ||
+        a.status === "talking" ||
+        a.path?.length
+    );
     for (const a of sorted) {
+      const seated = isAtOwnDesk(a);
+      if (mode === "seated" && !seated) continue;
+      if (mode === "moving" && seated) continue;
       anchors[a.id] = drawAvatarSprite(ctx, a, office, style, a._index);
     }
     return anchors;
@@ -152,9 +189,11 @@ export function createAgents(template, { avatarStyle = "robot" } = {}) {
     let best = null;
     let bestDist = radius;
     for (const a of agents) {
-      const { x, y } = office.screenOf(a.col, a.row);
+      const seated = isAtOwnDesk(a);
+      const seat = seated && office.seatPoint ? office.seatPoint(a.col, a.row) : null;
+      const { x, y } = seat || office.screenOf(a.col, a.row);
       const ax = x;
-      const ay = y - 26 * s;
+      const ay = y - 18 * s;
       const dx = localX - ax;
       const dy = localY - ay;
       const d = Math.hypot(dx, dy);
@@ -174,6 +213,7 @@ export function createAgents(template, { avatarStyle = "robot" } = {}) {
     walkTo,
     say,
     saySticky,
+    toggleWaitingBubble,
     clearBubble,
     update,
     drawAll,

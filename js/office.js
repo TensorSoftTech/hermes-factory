@@ -309,43 +309,6 @@ export function createOffice(canvas, template) {
     ctx.fill();
   }
 
-  function drawKanbanBoard(col, row) {
-    const { x, y } = screen(col, row);
-    const s = avatarScale;
-    const bw = Math.round(72 * s);
-    const bh = Math.round(34 * s);
-    const bx = x - bw * 0.15;
-    const by = y - wallH + Math.round(6 * s);
-    // frame on wall
-    ctx.fillStyle = "#2a3038";
-    ctx.fillRect(bx, by, bw, bh);
-    ctx.fillStyle = "#151a20";
-    ctx.fillRect(bx + 3, by + 3, bw - 6, bh - 6);
-    ctx.fillStyle = "#e8eef5";
-    ctx.font = `700 ${Math.max(8, Math.round(9 * s))}px 'IBM Plex Sans', sans-serif`;
-    ctx.fillText("BOARD", bx + 8, by + 14);
-    const cols = [
-      { t: "to do", c: "#6b8cae" },
-      { t: "doing", c: "#7a9e6e" },
-      { t: "review", c: "#c4a35a" },
-      { t: "done", c: "#9a7bb0" },
-    ];
-    const cw = (bw - 16) / 4;
-    cols.forEach((colDef, i) => {
-      const cx = bx + 8 + i * cw;
-      ctx.fillStyle = colDef.c;
-      ctx.globalAlpha = 0.9;
-      ctx.fillRect(cx, by + 18, cw - 4, 3);
-      ctx.globalAlpha = 0.25;
-      ctx.fillRect(cx, by + 23, cw - 4, bh - 30);
-      ctx.globalAlpha = 0.7;
-      ctx.fillStyle = "#cfd8e3";
-      ctx.font = `${Math.max(6, Math.round(6.5 * s))}px 'IBM Plex Sans', sans-serif`;
-      ctx.fillText(colDef.t, cx, by + 17);
-    });
-    ctx.globalAlpha = 1;
-  }
-
   function drawFloor() {
     const accent = cssVar("--accent", "#3d7ab8");
     const panelBorder = cssVar("--panel-border", "#c5d0dc");
@@ -421,9 +384,6 @@ export function createOffice(canvas, template) {
       edge: "#c9c2b9",
     });
 
-    // Kanban on back wall
-    drawKanbanBoard(minCol + 1, minRow);
-
     // Zone labels
     for (const room of template.rooms || []) {
       const text = String(room.label || "").toUpperCase();
@@ -461,85 +421,7 @@ export function createOffice(canvas, template) {
       drawWallWest(ox + sw - 1, oy, sh, { glass: true });
     }
 
-    // Tables — flat tops + legs (readable as desks, not cubes)
-    const desks = template.desks || [];
-    desks.forEach((desk, di) => {
-      const [c, r] = desk.tile;
-      const { x, y } = screen(c, r);
-      const s = avatarScale;
-      const topH = Math.round(5 * s);
-      const legH = Math.round(10 * s);
-
-      // four legs
-      const legColor = "#8a6a45";
-      const legs = [
-        [-TILE_W * 0.28, TILE_H * 0.22],
-        [TILE_W * 0.22, TILE_H * 0.22],
-        [-TILE_W * 0.18, TILE_H * 0.55],
-        [TILE_W * 0.12, TILE_H * 0.55],
-      ];
-      for (const [lx, ly] of legs) {
-        ctx.fillStyle = legColor;
-        ctx.fillRect(x + lx - 1.5 * s, y + ly - legH, 3 * s, legH);
-      }
-
-      // tabletop diamond (wider than a floor block)
-      const tw = TILE_W * 0.72;
-      const th = TILE_H * 0.72;
-      const ty = y + TILE_H * 0.18 - topH;
-      ctx.beginPath();
-      ctx.moveTo(x, ty);
-      ctx.lineTo(x + tw / 2, ty + th / 2);
-      ctx.lineTo(x, ty + th);
-      ctx.lineTo(x - tw / 2, ty + th / 2);
-      ctx.closePath();
-      ctx.fillStyle = "#d8be98";
-      ctx.fill();
-      ctx.strokeStyle = "rgba(90,70,45,0.35)";
-      ctx.lineWidth = 1;
-      ctx.stroke();
-      // top edge highlight
-      ctx.beginPath();
-      ctx.moveTo(x - tw / 2, ty + th / 2);
-      ctx.lineTo(x, ty);
-      ctx.lineTo(x + tw / 2, ty + th / 2);
-      ctx.strokeStyle = "rgba(255,255,255,0.35)";
-      ctx.stroke();
-
-      // chair behind table
-      const ch = screen(c, r + 0.95);
-      ctx.fillStyle = "#7d858e";
-      ctx.beginPath();
-      ctx.ellipse(ch.x, ch.y - 2 * s, 5.5 * s, 3.8 * s, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#5c646c";
-      ctx.fillRect(ch.x - 1.5 * s, ch.y - 1 * s, 3 * s, 5 * s);
-
-      // open laptop on table
-      const mw = Math.round(13 * s);
-      const baseY = ty + th * 0.42;
-      ctx.fillStyle = "#3a3f46";
-      ctx.fillRect(x - mw / 2, baseY, mw, Math.round(6 * s));
-      ctx.fillStyle = "#1a222c";
-      ctx.fillRect(
-        x - mw / 2 + 1,
-        baseY - Math.round(8 * s),
-        mw - 2,
-        Math.round(9 * s)
-      );
-      ctx.fillStyle = mixHex(accent, "#9ad0ff", 0.5);
-      ctx.fillRect(
-        x - mw / 2 + 2,
-        baseY - Math.round(7 * s),
-        mw - 4,
-        Math.round(6 * s)
-      );
-
-      // small plant every other table, on the side
-      if (di % 2 === 0) {
-        drawPlant(x + Math.round(tw * 0.38), ty + th * 0.35, s, false);
-      }
-    });
+    // Desks are painted after seated people so the laptop stays in front of them.
 
     // Zone corner plants only (don't clutter the desk grid)
     for (const room of template.rooms || []) {
@@ -557,6 +439,128 @@ export function createOffice(canvas, template) {
     ctx.lineWidth = 2;
     ctx.strokeRect(8, 8, availW - 16, availH - 16);
   }
+
+  /** Screen point with height. z is in tile units; 1 ≈ one tile-row tall. */
+  function project(col, row, z = 0) {
+    const p = screen(col, row);
+    return { x: p.x, y: p.y - z * TILE_H };
+  }
+
+  function fillPoly(points, fill) {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+
+  /** Isometric box. w along col, d along row, h up. */
+  function drawIsoBox(col, row, w, d, h, z0, top, left, right) {
+    const p = (dc, dr, z) => project(col + dc, row + dr, z);
+    const front = [p(0, d, z0), p(w, d, z0), p(w, d, z0 + h), p(0, d, z0 + h)];
+    const side = [p(w, 0, z0), p(w, d, z0), p(w, d, z0 + h), p(w, 0, z0 + h)];
+    const cap = [p(0, 0, z0 + h), p(w, 0, z0 + h), p(w, d, z0 + h), p(0, d, z0 + h)];
+    fillPoly(front, left);
+    fillPoly(side, right);
+    fillPoly(cap, top);
+  }
+
+  /**
+   * Worker stands behind the desk (smaller row = further from the camera),
+   * looking at the laptop on the desktop.
+   */
+  function seatPoint(col, row) {
+    // Just behind the desktop's back edge. Desk is painted after, so it
+    // covers the legs and the head stays above the laptop.
+    const back = project(col, row - 0.16, 0.42);
+    return { x: back.x, y: back.y + 2 * avatarScale };
+  }
+
+  function drawDesks(litTiles) {
+    const lit = litTiles instanceof Set ? litTiles : new Set();
+    for (const desk of template.desks || []) {
+      const [c, r] = desk.tile;
+      const working = lit.has(`${Math.round(c)},${Math.round(r)}`);
+      const ox = c - 0.42;
+      const oy = r - 0.08;
+      const woodT = "#d7a874";
+      const woodL = "#a9784b";
+      const woodR = "#bf8c5c";
+      drawIsoBox(ox, oy, 0.08, 0.62, 0.46, 0, woodT, woodL, woodR);
+      drawIsoBox(ox + 0.78, oy, 0.08, 0.62, 0.46, 0, woodT, woodL, woodR);
+      drawIsoBox(ox, oy, 0.86, 0.62, 0.07, 0.46, woodT, woodL, woodR);
+
+      const lx = ox + 0.18;
+      const ly = oy + 0.1;
+      drawIsoBox(lx, ly, 0.5, 0.34, 0.035, 0.53, "#8b93a3", "#4a5160", "#5d6576");
+
+      const lid = [
+        project(lx, ly + 0.32, 0.58),
+        project(lx + 0.5, ly + 0.32, 0.58),
+        project(lx + 0.5, ly + 0.32, 0.96),
+        project(lx, ly + 0.32, 0.96),
+      ];
+      fillPoly(lid, working ? "#24362e" : "#3a3d45");
+      if (working) {
+        const glow = [
+          project(lx + 0.06, ly + 0.32, 0.64),
+          project(lx + 0.44, ly + 0.32, 0.64),
+          project(lx + 0.44, ly + 0.32, 0.9),
+          project(lx + 0.06, ly + 0.32, 0.9),
+        ];
+        fillPoly(glow, "#9ef0c4");
+      }
+      const logo = project(lx + 0.25, ly + 0.32, 0.78);
+      ctx.beginPath();
+      ctx.arc(logo.x, logo.y, Math.max(2.2, TILE_W * 0.045), 0, Math.PI * 2);
+      if (working) {
+        ctx.fillStyle = "#9ef0c4";
+        ctx.shadowColor = "#36e08f";
+        ctx.shadowBlur = 8;
+      } else {
+        ctx.fillStyle = "#555a66";
+        ctx.shadowBlur = 0;
+      }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  }
+
+  /** Kept so older paint paths don't crash. Desks are drawn with the floor. */
+  /** Bottom-right of the floor — the shared meeting / kanban table. */
+  function kanbanTile() {
+    return [Math.max(minCol + 1, maxCol - 1), Math.max(minRow + 1, maxRow - 1)];
+  }
+
+  function drawKanbanTable() {
+    const [c, r] = kanbanTile();
+    const ox = c - 0.55;
+    const oy = r - 0.2;
+    drawIsoBox(ox, oy, 1.15, 0.7, 0.08, 0.42, "#efe6d4", "#c4b49a", "#d7c7ae");
+    const label = project(ox + 0.58, oy + 0.28, 0.62);
+    ctx.save();
+    ctx.font = `700 ${Math.max(9, Math.round(10 * avatarScale))}px "IBM Plex Sans", sans-serif`;
+    ctx.fillStyle = "#5c5348";
+    ctx.textAlign = "center";
+    ctx.fillText("KANBAN", label.x, label.y - 2);
+    ctx.font = `600 ${Math.max(8, Math.round(8 * avatarScale))}px "IBM Plex Sans", sans-serif`;
+    ctx.fillText("click", label.x, label.y + 10 * avatarScale);
+    ctx.restore();
+    for (let i = 0; i < 3; i++) {
+      const slip = project(ox + 0.28 + i * 0.28, oy + 0.22, 0.52);
+      ctx.fillStyle = ["#d7e4c8", "#f3e2b8", "#e4d4ee"][i];
+      ctx.fillRect(slip.x - 7, slip.y - 5, 14, 9);
+    }
+  }
+
+  function hitKanban(localX, localY) {
+    const [c, r] = kanbanTile();
+    const p = screen(c, r);
+    return Math.hypot(localX - p.x, localY - p.y) < TILE_W * 0.7;
+  }
+
+  function drawDeskFronts() {}
 
   function pathBetween(from, to) {
     const path = [];
@@ -583,6 +587,12 @@ export function createOffice(canvas, template) {
 
   return {
     drawFloor,
+    drawDesks,
+    drawDeskFronts,
+    drawKanbanTable,
+    kanbanTile,
+    hitKanban,
+    seatPoint,
     screenOf: (col, row) => screen(col, row),
     clientToLocal,
     pathBetween,

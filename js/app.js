@@ -1,23 +1,28 @@
-import { createOffice } from "./office.js?v=bubble-click-4";
-import { createAgents, swatchDataUrl } from "./agents.js?v=bubble-click-4";
+import { createOffice } from "./office.js?v=desk-1tnt";
+import { createGraphView } from "./graph.js?v=board-visible-2";
+import { createAgents, swatchDataUrl } from "./agents.js?v=waiting-bubble-1";
 import {
   createComms,
   renderRoster,
   syncRosterStatus,
-} from "./comms.js?v=bubble-click-4";
-import { createStats } from "./stats.js?v=bubble-click-4";
-import { createMission } from "./mission.js?v=bubble-click-4";
-import { createCommand } from "./command.js?v=bubble-click-4";
-import { createSettings } from "./settings.js?v=bubble-click-4";
+} from "./comms.js?v=waiting-bubble-1";
+import { createStats } from "./stats.js?v=state-history-1";
+import { createMission } from "./mission.js?v=mission-sync-1";
+import { createCommand } from "./command.js?v=gate-allow-1";
+import { createSettings } from "./settings.js?v=profile-sync-1";
 import {
   listTemplates,
   getTemplate,
   refreshTemplates,
   applySettingsToTemplate,
-} from "./registry.js?v=bubble-click-4";
-import { applyTheme, DEFAULT_THEME_ID } from "./themes.js?v=bubble-click-4";
+} from "./registry.js?v=profile-guard-1";
+import { applyTheme, DEFAULT_THEME_ID } from "./themes.js?v=state-history-1";
+import { createPersist } from "./persist.js?v=state-history-1";
+import { createKanban } from "./kanban.js?v=gate-allow-1";
+import { createDeliveredPanel } from "./delivered.js?v=state-history-1";
 
 const canvas = document.getElementById("office-canvas");
+const graphHost = document.getElementById("office-graph");
 const rosterList = document.getElementById("roster-list");
 const feedList = document.getElementById("feed-list");
 const speechLayer = document.getElementById("speech-layer");
@@ -39,6 +44,8 @@ const state = {
   profiles: [],
   template: null,
   office: null,
+  graph: null,
+  viewMode: "office",
   agents: null,
   stats: null,
   mission: null,
@@ -46,8 +53,59 @@ const state = {
   edgeEvents: [],
 };
 
+// Snapshot of everything that must survive a browser refresh.
+// (command/stats/mission are read lazily at save time — all initialized by then.)
+const persist = createPersist({
+  snapshot: () => ({
+    viewMode: state.viewMode,
+    templateId: state.settings?.templateId || null,
+    mission: state.mission?.getState?.() || null,
+    board: command.getContext?.() || null,
+    ...(state.stats?.snapshot?.() || {}),
+    kanban: state.kanban?.snapshot?.() || [],
+  }),
+});
+
+state.kanban = createKanban({
+  overlay: document.getElementById("kanban-overlay"),
+  onChange: () => {
+    persist.saveLater();
+    try {
+      command.syncFloorPositions?.();
+    } catch {
+      /* ignore */
+    }
+  },
+  onResetTasks: () => {
+    command.changeCourse?.();
+    persist.saveLater();
+  },
+});
+
+document.getElementById("btn-change-course")?.addEventListener("click", () => {
+  if (
+    !window.confirm(
+      "Stop & remove the current task? This clears the kanban and unlocks the dock for a new order."
+    )
+  ) {
+    return;
+  }
+  command.changeCourse?.();
+  persist.saveLater();
+});
+
 state.mission = createMission({
   rootEl: document.getElementById("mission-root"),
+  getKanban: () => state.kanban,
+  onChange: () => persist.saveLater(),
+  onPause: () => {
+    command.pauseTask?.();
+    persist.saveLater();
+  },
+  onStop: () => {
+    command.changeCourse?.();
+    persist.saveLater();
+  },
 });
 
 function deskTile(deskId) {
@@ -58,12 +116,14 @@ function deskTile(deskId) {
 const command = createCommand({
   getTemplate: () => state.template,
   getSettings: () => state.settings,
+  getProfiles: () => state.profiles,
   getAgents: () => state.agents,
   getOffice: () => state.office,
   getComms: () => state.comms,
   getStats: () => state.stats,
   getEdgeEvents: () => state.edgeEvents,
   getMission: () => state.mission,
+  getKanban: () => state.kanban,
   deskTile,
   sessionEl: sessionStatsEl,
   usageEl: usageTableEl,
@@ -94,11 +154,19 @@ function mountTemplate(rawTemplate, settings, { force = false } = {}) {
   templateLabel.textContent = `${template.name} · parent ${settings.parentProfile || "default"}`;
 
   state.office = createOffice(canvas, template);
+  state.graph?.destroy?.();
+  state.graph = createGraphView(graphHost, template, {
+    onNodeClick: (agentId) => {
+      const a = state.agents?.byId?.(agentId);
+      if (a?.stickyBubble && a.bubbleAction === "board-reply") openBoardReply(agentId);
+      else openEmployeeCard(agentId);
+    },
+  });
   state.agents = createAgents(template, {
     avatarStyle: settings.avatarStyle || "alien",
   });
   if (!state.stats) {
-    state.stats = createStats(template);
+    state.stats = createStats(template, { onRecord: () => persist.saveLater() });
     wireCallDetail(state.stats);
   } else {
     state.stats.rebuild(template);
@@ -114,6 +182,10 @@ function mountTemplate(rawTemplate, settings, { force = false } = {}) {
         state.agents?.clearBubble?.(agentId);
         return;
       }
+      if (action === "toggle-waiting") {
+        state.agents?.toggleWaitingBubble?.(agentId);
+        return;
+      }
       if (action === "board-reply") openBoardReply(agentId);
     },
   });
@@ -126,13 +198,39 @@ function mountTemplate(rawTemplate, settings, { force = false } = {}) {
   closeEmployeeCard();
   command.refreshAssignee();
   command.refreshStats();
+  applyViewMode(state.viewMode, { persist: false });
   // layout after the stage has real dimensions
   requestAnimationFrame(() => {
     state.office?.resize?.();
-    state.office?.drawFloor();
-    state.agents?.drawAll(canvas.getContext("2d"), state.office);
+    paintOffice();
   });
 }
+
+function applyViewMode(mode, { persist: save = true } = {}) {
+  if (mode === "office" || mode === "graph") state.viewMode = mode;
+  const graphOn = state.viewMode === "graph";
+  if (canvas) canvas.hidden = graphOn;
+  if (graphHost) graphHost.hidden = !graphOn;
+  document.querySelectorAll("#view-toggle [data-view]").forEach((b) => {
+    const on = b.dataset.view === state.viewMode;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  if (!graphOn && !canvas?.hidden) {
+    requestAnimationFrame(() => {
+      state.office?.resize?.();
+      state.office?.drawFloor?.();
+    });
+  }
+  if (save) persist.saveLater();
+}
+
+document
+  .getElementById("view-toggle")
+  ?.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-view]");
+    if (btn) applyViewMode(btn.dataset.view);
+  });
 
 function setEmp(sel, text) {
   const node = employeeCard?.querySelector(`[data-emp="${sel}"]`);
@@ -269,6 +367,11 @@ boardReplyOverlay?.addEventListener("click", (e) => {
 canvas?.addEventListener("click", (e) => {
   if (!state.office || !state.agents) return;
   const { x, y } = state.office.clientToLocal(e.clientX, e.clientY);
+  if (state.office.hitKanban?.(x, y)) {
+    closeEmployeeCard();
+    state.kanban?.open(state.template);
+    return;
+  }
   const hit = state.agents.hitTest(x, y, state.office);
   if (hit) openEmployeeCard(hit.id);
   else closeEmployeeCard();
@@ -278,7 +381,8 @@ canvas?.addEventListener("mousemove", (e) => {
   if (!state.office || !state.agents || !canvas) return;
   const { x, y } = state.office.clientToLocal(e.clientX, e.clientY);
   const hit = state.agents.hitTest(x, y, state.office);
-  canvas.classList.toggle("is-hover-agent", Boolean(hit));
+  const board = state.office.hitKanban?.(x, y);
+  canvas.classList.toggle("is-hover-agent", Boolean(hit || board));
 });
 
 let resizeTimer = null;
@@ -287,8 +391,7 @@ window.addEventListener("resize", () => {
   resizeTimer = setTimeout(() => {
     if (!state.office || !state.agents) return;
     state.office.resize();
-    state.office.drawFloor();
-    state.agents.drawAll(canvas.getContext("2d"), state.office);
+    paintOffice();
   }, 80);
 });
 
@@ -382,23 +485,48 @@ createSettings({
   },
 });
 
+// History button → running task + persisted deliveries
+createDeliveredPanel({
+  buttonEl: document.getElementById("btn-delivered"),
+  overlayEl: document.getElementById("delivered-overlay"),
+  listEl: document.getElementById("delivered-list"),
+  runningEl: document.getElementById("delivered-running"),
+  getMission: () => state.mission?.getState?.() || null,
+});
+
 let lastTs = performance.now();
 let lastCardRefresh = 0;
+function paintOffice() {
+  if (!state.office || !state.agents || !canvas) return null;
+  const ctx2d = canvas.getContext("2d");
+  const lit = new Set();
+  for (const a of state.agents.list || []) {
+    if (!a.home || (a.status !== "working" && a.status !== "talking")) continue;
+    if (a.path?.length) continue;
+    lit.add(`${Math.round(a.home[0])},${Math.round(a.home[1])}`);
+  }
+  state.office.drawFloor();
+  state.comms?.drawEdges?.(ctx2d, state.office, state.edgeEvents, performance.now());
+  const seated = state.agents.drawAll(ctx2d, state.office, "seated");
+  // Desk in front of the sitter — laptop stays between them and the camera.
+  state.office.drawDesks?.(lit);
+  state.office.drawKanbanTable?.();
+  const moving = state.agents.drawAll(ctx2d, state.office, "moving");
+  return { ...seated, ...moving };
+}
+
 function frame(now) {
   requestAnimationFrame(frame);
   if (!state.agents || !state.office || !state.comms) return;
   const dt = Math.min(48, now - lastTs);
   lastTs = now;
   state.agents.update(dt);
-  state.office.drawFloor();
-  state.comms.drawEdges(
-    canvas.getContext("2d"),
-    state.office,
-    state.edgeEvents,
-    performance.now()
-  );
-  const anchors = state.agents.drawAll(canvas.getContext("2d"), state.office);
-  state.comms.renderBubbles(anchors);
+  if (state.viewMode === "graph") {
+    state.graph?.update?.(state.agents, state.edgeEvents, performance.now());
+  } else {
+    const anchors = paintOffice();
+    if (anchors) state.comms.renderBubbles(anchors);
+  }
   syncRosterStatus(rosterList, state.agents);
   if (selectedEmployeeId && now - lastCardRefresh > 800) {
     lastCardRefresh = now;
@@ -429,7 +557,7 @@ python3 server/bridge.py</pre>
     return;
   }
 
-  const [settings, profilesPayload] = await Promise.all([
+  const [settings, profilesPayload, , savedState] = await Promise.all([
     fetch("/api/settings").then((r) => {
       if (!r.ok) throw new Error(`settings ${r.status}`);
       return r.json();
@@ -439,6 +567,7 @@ python3 server/bridge.py</pre>
       return r.json();
     }),
     refreshTemplates(),
+    persist.load(),
   ]);
   const themeId = settings.themeId || DEFAULT_THEME_ID;
   applyTheme(themeId);
@@ -485,7 +614,49 @@ python3 server/bridge.py</pre>
   if (!state.agents?.list?.length) {
     throw new Error("Mount produced no employees");
   }
+  restorePersisted(savedState);
   document.getElementById("chat-input")?.focus();
+}
+
+/** Rehydrate mission + run history + board context after a refresh. */
+function restorePersisted(saved) {
+  if (!saved || typeof saved !== "object") return;
+  if (saved.viewMode === "office" || saved.viewMode === "graph") {
+    state.viewMode = saved.viewMode;
+  }
+  const sameTemplate =
+    !saved.templateId || saved.templateId === state.settings?.templateId;
+  if (sameTemplate) {
+    if (state.stats && Array.isArray(saved.calls)) {
+      state.stats.restore({
+        calls: saved.calls,
+        session: saved.session,
+        agentUsage: saved.agentUsage,
+        seq: saved.seq,
+      });
+    }
+    command.restoreContext(saved.board);
+    if (Array.isArray(saved.kanban)) state.kanban?.restore(saved.kanban);
+    if (saved.mission && typeof saved.mission === "object") {
+      state.mission?.restore?.(saved.mission);
+      command.resumeAfterReload();
+      const note = saved.mission.delivered
+        ? "Restored delivered mission — open History for the report."
+        : saved.mission.paused
+          ? `Restored paused task “${String(saved.mission.title || "mission").slice(0, 80)}” — dock is free for a new order.`
+          : `Restored running task “${String(saved.mission.title || "mission").slice(0, 80)}” — continuing from the last checkpoint.`;
+      state.comms?.pushFeed?.({ from: "system", to: "you", text: note, at: "now" });
+    }
+    command.refreshStats();
+  } else if (saved.mission) {
+    state.comms?.pushFeed?.({
+      from: "system",
+      to: "you",
+      text: "Template changed — previous mission state not restored.",
+      at: "now",
+    });
+  }
+  applyViewMode(state.viewMode, { persist: false });
 }
 
 boot().catch((err) => {

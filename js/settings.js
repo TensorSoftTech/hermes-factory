@@ -21,7 +21,7 @@ import {
   persistTheme,
   DEFAULT_THEME_ID,
 } from "./themes.js";
-import { AVATAR_STYLES, swatchForStyle } from "./avatars.js?v=bubble-click-4";
+import { AVATAR_STYLES, swatchForStyle } from "./avatars.js?v=state-history-1";
 
 const API = "";
 
@@ -62,6 +62,10 @@ export function createSettings({ getState, onApply, isBusy }) {
   let draftTemplate = null;
   let draftThemeId = DEFAULT_THEME_ID;
   let draftAvatarStyle = "robot";
+  /** Runtime role→profile map (settings.roleProfiles). UI must resolve like hermes.profileForRole. */
+  let draftRoleProfiles = {};
+  let draftParentProfile = "default";
+  let draftSettingsTemplateId = null;
 
   function setStatus(msg, isErr = false) {
     if (!statusEl) return;
@@ -107,12 +111,12 @@ export function createSettings({ getState, onApply, isBusy }) {
 
   function fillProfileSelect(select, selected) {
     if (!select) return;
+    const want = selected || "default";
     select.innerHTML = "";
     for (const p of profiles) {
       const opt = document.createElement("option");
       opt.value = p.id;
       opt.textContent = `${p.id} · ${p.provider}/${p.model}`;
-      if (p.id === selected) opt.selected = true;
       select.appendChild(opt);
     }
     if (!profiles.length) {
@@ -121,6 +125,40 @@ export function createSettings({ getState, onApply, isBusy }) {
       opt.textContent = "default";
       select.appendChild(opt);
     }
+    // Keep unknown ids selectable so Save can't silently clobber them
+    if (want && ![...select.options].some((o) => o.value === want)) {
+      const opt = document.createElement("option");
+      opt.value = want;
+      opt.textContent = `${want} · (not listed)`;
+      select.appendChild(opt);
+    }
+    select.value = want;
+  }
+
+  /** Same order as profileForRole / applySettingsToTemplate. */
+  function effectiveProfileForRole(role) {
+    const ov = draftRoleProfiles?.[role?.id];
+    return (
+      ov?.hermesProfile ||
+      role?.hermesProfile ||
+      draftParentProfile ||
+      "default"
+    );
+  }
+
+  /** Align draft template roles with settings.roleProfiles when editing the active org. */
+  function applyRoleProfilesToDraft() {
+    if (!draftTemplate?.roles?.length) return;
+    if (
+      draftSettingsTemplateId &&
+      draftTemplate.id !== draftSettingsTemplateId
+    ) {
+      return;
+    }
+    draftTemplate.roles = draftTemplate.roles.map((role) => ({
+      ...role,
+      hermesProfile: effectiveProfileForRole(role),
+    }));
   }
 
   function fillTemplateSelect(selected) {
@@ -341,7 +379,7 @@ export function createSettings({ getState, onApply, isBusy }) {
       const sel = document.createElement("select");
       sel.className = "settings__select";
       sel.dataset.field = "hermesProfile";
-      fillProfileSelect(sel, role.hermesProfile || "default");
+      fillProfileSelect(sel, effectiveProfileForRole(role));
 
       const meta = document.createElement("p");
       meta.className = "settings__role-meta";
@@ -392,6 +430,7 @@ export function createSettings({ getState, onApply, isBusy }) {
     }
     if (!full) throw new Error(`Template missing: ${id}`);
     draftTemplate = structuredClone(full);
+    applyRoleProfilesToDraft();
     if (templateNameEl) templateNameEl.value = draftTemplate.name || "";
     fillOrchSelect();
     renderRoleRows();
@@ -499,9 +538,20 @@ export function createSettings({ getState, onApply, isBusy }) {
     setStatus("Loading profiles & templates…");
     try {
       await Promise.all([loadProfiles(), refreshTemplates()]);
+      const liveSettings = getState()?.settings;
       const draftSettings = await api("/api/settings");
-      draftThemeId = draftSettings.themeId || DEFAULT_THEME_ID;
-      draftAvatarStyle = draftSettings.avatarStyle || "robot";
+      // Prefer in-memory settings when present (covers soft-apply before remount)
+      const source = liveSettings
+        ? { ...draftSettings, ...liveSettings }
+        : draftSettings;
+      draftThemeId = source.themeId || DEFAULT_THEME_ID;
+      draftAvatarStyle = source.avatarStyle || "robot";
+      draftRoleProfiles =
+        source.roleProfiles && typeof source.roleProfiles === "object"
+          ? source.roleProfiles
+          : {};
+      draftParentProfile = source.parentProfile || "default";
+      draftSettingsTemplateId = source.templateId || null;
       applyTheme(draftThemeId);
       renderThemes();
       renderAvatars();
@@ -510,14 +560,14 @@ export function createSettings({ getState, onApply, isBusy }) {
       const selected =
         templateSelect?.value ||
         state.template?.id ||
-        draftSettings.templateId ||
+        source.templateId ||
         listTemplates()[0]?.id;
       if (!selected) throw new Error("No templates available");
 
       fillTemplateSelect(selected);
       if (templateSelect) templateSelect.value = selected;
-      fillProfileSelect(parentSelect, draftSettings.parentProfile || "default");
-      if (hermesBinEl) hermesBinEl.value = draftSettings.hermesBin || "";
+      fillProfileSelect(parentSelect, draftParentProfile);
+      if (hermesBinEl) hermesBinEl.value = source.hermesBin || "";
       loadTemplateIntoEditor(selected);
       const body = overlay.querySelector(".settings__body");
       if (body) body.scrollTop = 0;
@@ -672,6 +722,9 @@ export function createSettings({ getState, onApply, isBusy }) {
         method: "PUT",
         body: JSON.stringify(payload),
       });
+      draftRoleProfiles = payload.roleProfiles || {};
+      draftParentProfile = payload.parentProfile || "default";
+      draftSettingsTemplateId = payload.templateId || draftTemplate.id;
       await refreshTemplates();
       applyTheme(saved.themeId || draftThemeId);
       try {

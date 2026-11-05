@@ -19,7 +19,11 @@ ROOT = Path(__file__).resolve().parents[1]
 HERMES_HOME = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
 FACTORY_HOME = Path.home() / ".hermes-factory"
 SETTINGS_PATH = FACTORY_HOME / "settings.json"
+STATE_PATH = FACTORY_HOME / "state.json"
+HISTORY_PATH = FACTORY_HOME / "history.json"
 TEMPLATES_DIR = FACTORY_HOME / "templates"
+STATE_LOCK = threading.Lock()
+HISTORY_CAP = 200
 SEED_DIR = ROOT / "server" / "seed"
 HERMES_BIN = os.environ.get("HERMES_BIN", str(Path.home() / ".local" / "bin" / "hermes"))
 HOST = os.environ.get("FACTORY_HOST", "127.0.0.1")
@@ -59,6 +63,146 @@ def seed_templates() -> None:
         dest = TEMPLATES_DIR / seed.name
         if not dest.exists():
             dest.write_text(seed.read_text())
+    upgrade_seed_roles()
+
+
+def upgrade_seed_roles() -> None:
+    """Insert newly bundled software-company roles without touching existing ones.
+
+    Only ids listed in the seed's ``seedAdds`` are added, and only if missing.
+    Ids in ``seedRemoves`` (and their desks) are deleted. Other roles stay.
+    """
+    seed_path = SEED_DIR / "software-company.json"
+    dest = TEMPLATES_DIR / "software-company.json"
+    if not seed_path.exists() or not dest.exists():
+        return
+    try:
+        seed = json.loads(seed_path.read_text())
+        installed = json.loads(dest.read_text())
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(seed, dict) or not isinstance(installed, dict):
+        return
+    try:
+        want = int(seed.get("seedRevision") or 0)
+    except (TypeError, ValueError):
+        want = 0
+    try:
+        have = int(installed.get("seedRevision") or 0)
+    except (TypeError, ValueError):
+        have = 0
+    if want and have >= want:
+        return
+
+    removes = [rid for rid in (seed.get("seedRemoves") or []) if isinstance(rid, str)]
+    adds = [rid for rid in (seed.get("seedAdds") or []) if isinstance(rid, str)]
+    seed_roles = {
+        r.get("id"): r
+        for r in (seed.get("roles") or [])
+        if isinstance(r, dict) and r.get("id")
+    }
+    seed_desks = {
+        d.get("id"): d
+        for d in (seed.get("desks") or [])
+        if isinstance(d, dict) and d.get("id")
+    }
+    seed_rooms = {
+        r.get("id"): r
+        for r in (seed.get("rooms") or [])
+        if isinstance(r, dict) and r.get("id")
+    }
+    roles = [r for r in (installed.get("roles") or []) if isinstance(r, dict)]
+    desks = [d for d in (installed.get("desks") or []) if isinstance(d, dict)]
+    rooms = [r for r in (installed.get("rooms") or []) if isinstance(r, dict)]
+    role_ids = {r.get("id") for r in roles}
+    desk_ids = {d.get("id") for d in desks}
+    room_ids = {r.get("id") for r in rooms}
+    occupied: set[tuple] = set()
+    for role in roles:
+        home = role.get("home")
+        if isinstance(home, list) and len(home) == 2:
+            occupied.add((home[0], home[1]))
+    for desk in desks:
+        tile = desk.get("tile")
+        if isinstance(tile, list) and len(tile) == 2:
+            occupied.add((tile[0], tile[1]))
+
+    def free_near(tile) -> list:
+        col, row = (tile[0], tile[1]) if isinstance(tile, list) and len(tile) == 2 else (2, 12)
+        if (col, row) not in occupied:
+            return [col, row]
+        for dr in range(0, 6):
+            for dc in range(0, 8):
+                cand = (col + dc, row + dr)
+                if cand not in occupied:
+                    return [cand[0], cand[1]]
+        return [col, row + 2]
+
+    if removes:
+        drop = set(removes)
+        roles = [r for r in roles if r.get("id") not in drop]
+        desks = [
+            d
+            for d in desks
+            if d.get("id") not in {f"desk-{rid}" for rid in drop}
+        ]
+        role_ids = {r.get("id") for r in roles}
+        desk_ids = {d.get("id") for d in desks}
+        # Shrink the default leadership room once COO's desk is gone.
+        if "coo" in drop:
+            for room in rooms:
+                if (
+                    room.get("id") == "leadership"
+                    and room.get("origin") == [6, 1]
+                    and room.get("size") == [5, 3]
+                ):
+                    room["size"] = [3, 3]
+
+    for rid in adds:
+        if rid in role_ids or rid not in seed_roles:
+            continue
+        role = dict(seed_roles[rid])
+        desk_id = role.get("desk")
+        desk = dict(seed_desks[desk_id]) if desk_id in seed_desks else None
+        if desk:
+            room_id = desk.get("room")
+            room = seed_rooms.get(room_id)
+            if room and room_id not in room_ids:
+                rooms.append(dict(room))
+                room_ids.add(room_id)
+            tile = free_near(desk.get("tile") or role.get("home"))
+            desk["tile"] = tile
+            role["home"] = list(tile)
+            occupied.add((tile[0], tile[1]))
+            if desk_id not in desk_ids:
+                desks.append(desk)
+                desk_ids.add(desk_id)
+        elif isinstance(role.get("home"), list):
+            tile = free_near(role["home"])
+            role["home"] = tile
+            occupied.add(tuple(tile))
+        roles.append(role)
+        role_ids.add(rid)
+
+    refresh = [rid for rid in (seed.get("seedRefresh") or []) if isinstance(rid, str)]
+    for rid in refresh:
+        src = seed_roles.get(rid)
+        if not src:
+            continue
+        for role in roles:
+            if role.get("id") != rid:
+                continue
+            if src.get("description"):
+                role["description"] = src["description"]
+            if "teamHub" in src:
+                role["teamHub"] = src["teamHub"]
+
+    installed["roles"] = roles
+    installed["desks"] = desks
+    installed["rooms"] = rooms
+    if want:
+        installed["seedRevision"] = want
+    dest.write_text(json.dumps(installed, indent=2) + "\n")
 
 
 def list_templates() -> list[dict]:
@@ -224,6 +368,77 @@ def save_settings(data: dict) -> dict:
     return merged
 
 
+DEFAULT_STATE = {
+    "version": 1,
+    "viewMode": "office",
+    "mission": None,
+    "board": None,
+    "calls": [],
+    "session": None,
+    "agentUsage": None,
+    "seq": 0,
+    "feed": [],
+    "updatedAt": None,
+}
+
+
+def load_state() -> dict:
+    """Live task/session state so a browser refresh doesn't wipe the mission."""
+    ensure_factory_dirs()
+    if not STATE_PATH.exists():
+        return dict(DEFAULT_STATE)
+    try:
+        data = json.loads(STATE_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return dict(DEFAULT_STATE)
+    if not isinstance(data, dict):
+        return dict(DEFAULT_STATE)
+    out = dict(DEFAULT_STATE)
+    out.update(data)
+    return out
+
+
+def save_state(data: dict) -> dict:
+    ensure_factory_dirs()
+    if not isinstance(data, dict):
+        data = {}
+    out = dict(DEFAULT_STATE)
+    out.update(data)
+    out["updatedAt"] = time.time()
+    tmp = STATE_PATH.with_suffix(".tmp")
+    with STATE_LOCK:
+        tmp.write_text(json.dumps(out))
+        tmp.replace(STATE_PATH)
+    return out
+
+
+def load_history() -> list:
+    """Delivered-task history (newest first), persisted across refreshes."""
+    ensure_factory_dirs()
+    if not HISTORY_PATH.exists():
+        return []
+    try:
+        data = json.loads(HISTORY_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    return data if isinstance(data, list) else []
+
+
+def append_history(entry: dict) -> list:
+    ensure_factory_dirs()
+    if not isinstance(entry, dict) or not entry.get("id"):
+        raise ValueError("history entry needs an id")
+    items = load_history()
+    items = [e for e in items if isinstance(e, dict) and e.get("id") != entry["id"]]
+    items.insert(0, entry)
+    items = items[:HISTORY_CAP]
+    tmp = HISTORY_PATH.with_suffix(".tmp")
+    with STATE_LOCK:
+        tmp.write_text(json.dumps(items, indent=1))
+        tmp.replace(HISTORY_PATH)
+    return items
+
+
 def parse_model_provider(config_path: Path) -> tuple[str, str]:
     model = "unknown"
     provider = "unknown"
@@ -290,17 +505,243 @@ def list_profiles() -> list[dict]:
     return out
 
 
+def _kanban_db_paths() -> list[tuple[str, Path]]:
+    """Hermes Agent kanban DBs (default home + each profile) — not the factory board."""
+    items: list[tuple[str, Path]] = []
+    root = HERMES_HOME / "kanban.db"
+    if root.exists():
+        items.append(("default", root))
+    profiles_dir = HERMES_HOME / "profiles"
+    if profiles_dir.is_dir():
+        for child in sorted(profiles_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            db = child / "kanban.db"
+            if db.exists():
+                items.append((child.name, db))
+    return items
+
+
+def list_hermes_agent_tasks(limit: int = 40) -> dict:
+    """Open Hermes Agent (t_*) tasks still on disk — often leftover from CTO tool use."""
+    import sqlite3
+
+    tasks: list[dict] = []
+    errors: list[str] = []
+    for profile, path in _kanban_db_paths():
+        try:
+            con = sqlite3.connect(str(path.resolve()), timeout=2.0)
+            con.row_factory = sqlite3.Row
+            has = con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'"
+            ).fetchone()
+            if not has:
+                con.close()
+                continue
+            rows = con.execute(
+                """
+                SELECT id, title, status, assignee, worker_pid, created_at,
+                       started_at, last_heartbeat_at, last_failure_error
+                FROM tasks
+                WHERE lower(status) NOT IN ('done', 'cancelled', 'canceled', 'failed')
+                ORDER BY
+                  CASE lower(status)
+                    WHEN 'running' THEN 0
+                    WHEN 'in_progress' THEN 1
+                    WHEN 'ready' THEN 2
+                    ELSE 3
+                  END,
+                  COALESCE(started_at, created_at) DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            con.close()
+        except Exception as err:  # noqa: BLE001 — surface DB issues to UI
+            errors.append(f"{profile}: {err}")
+            continue
+        for row in rows:
+            status = str(row["status"] or "").lower()
+            tasks.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "status": status,
+                    "assignee": row["assignee"] or profile,
+                    "profile": profile,
+                    "workerPid": row["worker_pid"],
+                    "createdAt": row["created_at"],
+                    "startedAt": row["started_at"],
+                    "lastHeartbeatAt": row["last_heartbeat_at"],
+                    "lastError": (row["last_failure_error"] or "")[:200] or None,
+                    "running": status in ("running", "in_progress")
+                    or bool(row["worker_pid"]),
+                }
+            )
+    tasks.sort(
+        key=lambda t: (
+            0 if t.get("running") else 1 if t.get("status") == "ready" else 2,
+            -(t.get("startedAt") or t.get("createdAt") or 0),
+        )
+    )
+    running = [t for t in tasks if t.get("running")]
+    return {
+        "ok": True,
+        "tasks": tasks[:limit],
+        "runningCount": len(running),
+        "openCount": len(tasks),
+        "errors": errors,
+    }
+
+
+def clear_hermes_agent_tasks(task_ids: list[str] | None = None) -> dict:
+    """Archive leftover Hermes Agent (t_*) tasks so they stop dispatching."""
+    listed = list_hermes_agent_tasks(limit=100)
+    open_ids = [t["id"] for t in listed.get("tasks") or [] if t.get("id")]
+    running_ids = {
+        t["id"]
+        for t in listed.get("tasks") or []
+        if t.get("id") and t.get("running")
+    }
+    wanted = [str(x) for x in (task_ids if task_ids is not None else open_ids) if x]
+    if not wanted:
+        return {
+            "ok": True,
+            "cleared": [],
+            "failed": [],
+            "message": "No open Hermes Agent tasks",
+        }
+
+    settings = load_settings()
+    bin_path = settings.get("hermesBin") or HERMES_BIN
+    cleared: list[str] = []
+    failed: list[dict] = []
+
+    for tid in wanted:
+        if tid in running_ids:
+            try:
+                subprocess.run(
+                    [
+                        bin_path,
+                        "kanban",
+                        "reclaim",
+                        tid,
+                        "--reason",
+                        "factory clear leftover Hermes Agent task",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env={**os.environ, "TERM": "dumb"},
+                )
+            except Exception as err:  # noqa: BLE001
+                failed.append({"id": tid, "error": f"reclaim: {err}"})
+                continue
+        try:
+            proc = subprocess.run(
+                [bin_path, "kanban", "archive", tid],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                env={**os.environ, "TERM": "dumb"},
+            )
+            if proc.returncode != 0:
+                # Fallback: mark done in sqlite so dispatcher stops picking it up
+                _force_close_hermes_task(tid, reason="factory clear")
+                cleared.append(tid)
+            else:
+                cleared.append(tid)
+        except Exception as err:  # noqa: BLE001
+            try:
+                _force_close_hermes_task(tid, reason=f"factory clear after {err}")
+                cleared.append(tid)
+            except Exception as err2:  # noqa: BLE001
+                failed.append({"id": tid, "error": str(err2)})
+
+    after = list_hermes_agent_tasks(limit=100)
+    return {
+        "ok": not failed,
+        "cleared": cleared,
+        "failed": failed,
+        "remaining": after.get("openCount", 0),
+        "runningCount": after.get("runningCount", 0),
+        "tasks": after.get("tasks") or [],
+    }
+
+
+def _force_close_hermes_task(task_id: str, reason: str = "") -> None:
+    """Last-resort: set status cancelled in every kanban.db that has the row."""
+    import sqlite3
+
+    for _profile, path in _kanban_db_paths():
+        try:
+            con = sqlite3.connect(str(path.resolve()), timeout=2.0)
+            has = con.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'"
+            ).fetchone()
+            if not has:
+                con.close()
+                continue
+            con.execute(
+                """
+                UPDATE tasks
+                SET status = 'cancelled',
+                    completed_at = COALESCE(completed_at, ?),
+                    result = COALESCE(result, ?)
+                WHERE id = ? AND lower(status) NOT IN ('done', 'cancelled', 'canceled')
+                """,
+                (int(time.time()), reason or "cleared from Hermes Factory", task_id),
+            )
+            con.commit()
+            con.close()
+        except Exception:
+            continue
+
+
+def resolve_run_profile(requested: str | None, settings: dict | None = None) -> tuple[str, dict]:
+    """Enforce factory settings: never silently fall back to default/Nous when parent is set."""
+    settings = settings or load_settings()
+    parent = str(settings.get("parentProfile") or "default").strip() or "default"
+    known = {p["id"]: p for p in list_profiles()}
+    req = str(requested or "").strip()
+    # Role ids (swe, cto, …) are not Hermes profiles — ignore them
+    if req and req not in known:
+        req = ""
+    # Settings win: if parent is a real non-default profile, never run default/Nous
+    if parent in known and parent != "default" and (not req or req == "default"):
+        chosen = parent
+    else:
+        chosen = req or (parent if parent in known else "") or (
+            "default" if "default" in known else parent
+        )
+    meta = known.get(chosen) or {
+        "id": chosen,
+        "provider": "unknown",
+        "model": "unknown",
+    }
+    return chosen, {
+        "id": meta.get("id") or chosen,
+        "provider": meta.get("provider") or "unknown",
+        "model": meta.get("model") or "unknown",
+        "parentProfile": parent,
+        "requested": requested or None,
+    }
+
+
 def run_hermes(profile: str, prompt: str, hermes_bin: str | None = None) -> dict:
-    bin_path = hermes_bin or load_settings().get("hermesBin") or HERMES_BIN
+    settings = load_settings()
+    bin_path = hermes_bin or settings.get("hermesBin") or HERMES_BIN
+    chosen, profile_meta = resolve_run_profile(profile, settings)
     usage_path = Path(tempfile.gettempdir()) / f"hf-usage-{uuid.uuid4().hex}.json"
     cmd = [bin_path]
-    if profile and profile != "default":
-        cmd.extend(["-p", profile])
+    # Always pass -p when not default so we never inherit ~/.hermes (Nous) by accident
+    if chosen and chosen != "default":
+        cmd.extend(["-p", chosen])
     cmd.extend(["-z", prompt, "--usage-file", str(usage_path)])
     # Redacted command for API history (full prompt lives in request body)
     cmd_display = [
         bin_path,
-        *(["-p", profile] if profile and profile != "default" else []),
+        *(["-p", chosen] if chosen and chosen != "default" else []),
         "-z",
         f"<prompt {len(prompt)} chars>",
         "--usage-file",
@@ -321,7 +762,8 @@ def run_hermes(profile: str, prompt: str, hermes_bin: str | None = None) -> dict
         return {
             "ok": False,
             "error": "Hermes timed out after 300s",
-            "profile": profile,
+            "profile": chosen,
+            "profileMeta": profile_meta,
             "reply": "",
             "usage": None,
             "latencyMs": latency_ms,
@@ -335,7 +777,8 @@ def run_hermes(profile: str, prompt: str, hermes_bin: str | None = None) -> dict
         return {
             "ok": False,
             "error": f"Hermes binary not found: {bin_path}",
-            "profile": profile,
+            "profile": chosen,
+            "profileMeta": profile_meta,
             "reply": "",
             "usage": None,
             "latencyMs": latency_ms,
@@ -364,10 +807,26 @@ def run_hermes(profile: str, prompt: str, hermes_bin: str | None = None) -> dict
 
     ok = proc.returncode == 0 and bool(reply)
     err = None if ok else (proc.stderr or proc.stdout or f"exit {proc.returncode}").strip()
+    combined = f"{err or ''}\n{proc.stderr or ''}\n{proc.stdout or ''}"
+    if not ok and (
+        "402" in combined
+        or "Insufficient available credits" in combined
+        or "nousresearch.com" in combined.lower()
+    ):
+        hint = (
+            f"[factory] HTTP 402 / Nous credits — this call used cloud Nous, not your local AI. "
+            f"Settings parentProfile={profile_meta.get('parentProfile')} "
+            f"(provider={profile_meta.get('provider')}, model={profile_meta.get('model')}). "
+            f"Run profile for this call: {chosen}. "
+            f"Hermes Agent kanban workers (t_*) use the default/Nous profile — "
+            f"do not create Hermes kanban cards; only the factory board."
+        )
+        err = f"{err}\n{hint}" if err else hint
     return {
         "ok": ok,
         "error": err,
-        "profile": profile,
+        "profile": chosen,
+        "profileMeta": profile_meta,
         "reply": reply if ok else (reply or err or ""),
         "usage": usage,
         "stderr": (proc.stderr or "")[-8000:],
@@ -438,8 +897,14 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(200, {"profiles": list_profiles()})
         if path == "/api/settings":
             return self._json(200, load_settings())
+        if path == "/api/state":
+            return self._json(200, load_state())
+        if path == "/api/history":
+            return self._json(200, {"entries": load_history()})
         if path == "/api/templates":
             return self._json(200, {"templates": list_templates()})
+        if path == "/api/hermes-tasks":
+            return self._json(200, list_hermes_agent_tasks())
         if path.startswith("/api/templates/"):
             tid = path[len("/api/templates/") :].strip("/")
             tmpl = load_template(tid)
@@ -453,6 +918,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/settings":
             data = self._read_json()
             return self._json(200, save_settings(data))
+        if path == "/api/state":
+            data = self._read_json()
+            return self._json(200, save_state(data))
         if path.startswith("/api/templates/"):
             tid = path[len("/api/templates/") :].strip("/")
             data = self._read_json()
@@ -463,12 +931,26 @@ class Handler(SimpleHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
         data = self._read_json()
+        if path == "/api/history":
+            # Append one delivered-task entry (deduped by id, newest first)
+            try:
+                items = append_history(data)
+            except ValueError as err:
+                return self._json(400, {"error": str(err)})
+            return self._json(201, {"ok": True, "count": len(items)})
+        if path == "/api/hermes-tasks/clear":
+            ids = data.get("ids")
+            if ids is not None and not isinstance(ids, list):
+                return self._json(400, {"ok": False, "error": "ids must be a list"})
+            result = clear_hermes_agent_tasks(ids)
+            return self._json(200 if result.get("ok") else 502, result)
         if path == "/api/run":
             settings = load_settings()
-            profile = (data.get("profile") or settings.get("parentProfile") or "default").strip()
             prompt = (data.get("prompt") or "").strip()
             if not prompt:
                 return self._json(400, {"ok": False, "error": "prompt required"})
+            # Enforce settings.parentProfile / known profiles (ignore bare role ids)
+            profile, _meta = resolve_run_profile(data.get("profile"), settings)
             result = run_hermes(profile, prompt, settings.get("hermesBin"))
             return self._json(200 if result["ok"] else 502, result)
         if path == "/api/templates":
