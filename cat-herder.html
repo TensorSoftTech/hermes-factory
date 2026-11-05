@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAT HERDER 🐈 — Office Chaos Edition</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; user-select:none; -webkit-user-select:none; }
+  html,body { height:100%; overflow:hidden; background:#1a1025; font-family:'Courier New',monospace; touch-action:none; }
+  #wrap { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; }
+  canvas { background:linear-gradient(180deg,#2b1d4a 0%,#1a1025 100%); border-radius:12px; box-shadow:0 0 60px rgba(255,100,200,.25); display:block; }
+  #overlay { position:fixed; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; background:rgba(20,10,35,.85); color:#fff; text-align:center; z-index:10; padding:20px; }
+  #overlay h1 { font-size:clamp(28px,6vw,56px); color:#ffd166; text-shadow:0 4px 0 #b3882b, 0 8px 20px rgba(0,0,0,.5); margin-bottom:10px; }
+  #overlay p { font-size:clamp(14px,2.5vw,20px); color:#e8d5ff; max-width:600px; line-height:1.5; margin-bottom:24px; }
+  #overlay .btn { font-family:inherit; font-size:clamp(16px,3vw,24px); padding:14px 42px; border:none; border-radius:12px; background:#ff5da2; color:#fff; cursor:pointer; box-shadow:0 6px 0 #c23c78; transition:transform .1s; }
+  #overlay .btn:hover { transform:scale(1.05); }
+  #overlay .btn:active { transform:translateY(4px); box-shadow:0 2px 0 #c23c78; }
+  .hidden { display:none !important; }
+  #tip { position:fixed; bottom:8px; width:100%; text-align:center; color:rgba(255,255,255,.35); font-size:12px; z-index:5; pointer-events:none; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="cv"></canvas></div>
+<div id="overlay">
+  <h1>🐱 CAT HERDER 🧹</h1>
+  <p id="msg">The office cats escaped! Herd them back into the box with your cursor.<br>Cats hate being told what to do. Beware of CHONK, the boss cat. 🐈‍⬛</p>
+  <button class="btn" id="startBtn">START HERDING</button>
+</div>
+<div id="tip">move mouse / drag finger to guide cats &nbsp;•&nbsp; press SPACE to pause</div>
+<script>
+(() => {
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const overlay = document.getElementById('overlay'), startBtn = document.getElementById('startBtn'), msg = document.getElementById('msg');
+let W = 800, H = 600, DPR = Math.min(devicePixelRatio||1, 2);
+function resize(){
+  const s = Math.min(innerWidth/ W, innerHeight/ H, 1);
+  cv.style.width = (W*s)+'px'; cv.style.height = (H*s)+'px';
+  cv.width = W*DPR; cv.height = H*DPR; ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+W = Math.min(innerWidth, 900); H = Math.min(innerHeight, 620);
+addEventListener('resize', resize); resize();
+
+// ---------- state ----------
+const S = { running:false, paused:false, t:0, score:0, cats:[], particles:[], floats:[], wave:0, saved:0, phone:null, shake:0 };
+const mouse = { x:W/2, y:H/2 };
+const BOX = { x:W-110, y:H-110, w:90, h:70 };
+
+function mkCat(x,y){
+  const palette = ['#ff9f43','#c8a2ff','#7bed9f','#ff6b81','#f9ca24','#48dbfb','#f368e0'];
+  return { x, y, vx:(Math.random()-.5)*2, vy:(Math.random()-.5)*2, r:14, hue:palette[(Math.random()*palette.length)|0],
+    face:'happy', flop:Math.random()*Math.PI*2, wig:Math.random()*Math.PI*2, panic:0 };
+}
+function waveSetup(n){
+  S.wave++; S.cats = [];
+  for(let i=0;i<n;i++) S.cats.push(mkCat(60+Math.random()*(W-160), 60+Math.random()*(H-160)));
+  if(S.wave % 3 === 0) S.phone = { x:W/2, y:-40, vy:2, hp:5, t:0 }; else S.phone = null;
+  float(W/2, 80, 'WAVE '+S.wave+(S.phone?'  —  BOSS CAT!':''), '#ffd166', 26);
+}
+
+function float(x,y,txt,col,size){ S.floats.push({x,y,txt,col,size:size||18,life:1}); }
+function burst(x,y,col,n){
+  for(let i=0;i<n;i++){ const a=Math.random()*Math.PI*2, s=1+Math.random()*4;
+    S.particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,col}); }
+}
+
+// ---------- input ----------
+function pos(e){ const r=cv.getBoundingClientRect(); const p=e.touches?e.touches[0]:e; return { x:(p.clientX-r.left)*(W/r.width), y:(p.clientY-r.top)*(H/r.height) }; }
+addEventListener('mousemove', e => { const p=pos(e); mouse.x=p.x; mouse.y=p.y; });
+addEventListener('touchmove', e => { e.preventDefault(); const p=pos(e); mouse.x=p.x; mouse.y=p.y; }, {passive:false});
+addEventListener('keydown', e => { if(e.code==='Space' && S.running){ e.preventDefault(); S.paused=!S.paused; } });
+
+startBtn.onclick = () => { overlay.classList.add('hidden'); S.running=true; S.paused=false; S.score=0; S.saved=0; S.t=0; S.wave=0; waveSetup(5); };
+
+// ---------- physics ----------
+const REPEL = 130;
+function steer(cat){
+  const dx=cat.x-mouse.x, dy=cat.y-mouse.y, d=Math.hypot(dx,dy)||1;
+  if(d < REPEL){ const f=(REPEL-d)/REPEL; cat.vx += (dx/d)*f*0.9; cat.vy += (dy/d)*f*0.9; cat.panic=Math.min(1,cat.panic+0.1); }
+  else cat.panic*=0.95;
+  cat.vx += (Math.random()-.5)*0.05; cat.vy += (Math.random()-.5)*0.05;
+  cat.vx *= 0.96; cat.vy *= 0.96;
+  const sp = Math.hypot(cat.vx,cat.vy); if(sp>6){ cat.vx*=6/sp; cat.vy*=6/sp; }
+  cat.x += cat.vx; cat.y += cat.vy;
+  if(cat.x<cat.r){cat.x=cat.r;cat.vx*=-1;} if(cat.x>W-cat.r){cat.x=W-cat.r;cat.vx*=-1;}
+  if(cat.y<cat.r){cat.y=cat.r;cat.vy*=-1;} if(cat.y>H-cat.r){cat.y=H-cat.r;cat.vy*=-1;}
+  // box entry
+  const bx=BOX.x+BOX.w/2, by=BOX.y+BOX.h/2;
+  if(cat.x>BOX.x+cat.r*0.3 && cat.x<BOX.x+BOX.w-cat.r*0.3 && cat.y>BOX.y+cat.r*0.3 && cat.y<BOX.y+BOX.h-cat.r*0.3){
+    S.cats.splice(S.cats.indexOf(cat),1); S.saved++; S.score+=100; burst(bx,by,'#ffd166',20);
+    float(bx,by-30,'+100 🎉','#ffd166');
+    if(S.cats.length===0){ S.score+=S.wave*50; setTimeout(()=>{ if(S.running && !S.paused) waveSetup(5+S.wave); }, 900); }
+  }
+}
+
+// ---------- render ----------
+function drawCat(c){
+  const wig=Math.sin(S.t*0.2+c.wig)*3;
+  ctx.save(); ctx.translate(c.x,c.y); ctx.rotate(Math.sin(c.wig)*0.15 + Math.sin(S.t*0.1)*0.05);
+  // tail
+  ctx.strokeStyle=c.hue; ctx.lineWidth=4; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(0,c.r*0.6); ctx.quadraticCurveTo(-c.r, c.r*0.9+Math.sin(S.t*0.3)*4, -c.r*1.4, c.r*0.4); ctx.stroke();
+  // body
+  ctx.fillStyle=c.hue; ctx.beginPath(); ctx.ellipse(0, wig*0.5, c.r*0.9, c.r, 0,0,Math.PI*2); ctx.fill();
+  // ears
+  ctx.beginPath(); ctx.moveTo(-c.r*0.5,-c.r*0.6); ctx.lineTo(-c.r*0.7,-c.r*1.3); ctx.lineTo(-c.r*0.1,-c.r*0.9); ctx.closePath();
+  ctx.moveTo(c.r*0.5,-c.r*0.6); ctx.lineTo(c.r*0.7,-c.r*1.3); ctx.lineTo(c.r*0.1,-c.r*0.9); ctx.closePath(); ctx.fill();
+  // face
+  ctx.fillStyle='#221';
+  const ey=c.panic>0.4?2.5:2;
+  ctx.beginPath(); ctx.arc(-c.r*0.35,-c.r*0.2, ey,0,Math.PI*2); ctx.arc(c.r*0.35,-c.r*0.2, ey,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(0,c.r*0.15,2.2,0,Math.PI*2); ctx.fill();
+  // whiskers
+  ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(-c.r*0.5,c.r*0.1); ctx.lineTo(-c.r*1.1,c.r*0.0); ctx.moveTo(-c.r*0.5,c.r*0.25); ctx.lineTo(-c.r*1.1,c.r*0.35);
+  ctx.moveTo(c.r*0.5,c.r*0.1); ctx.lineTo(c.r*1.1,c.r*0.0); ctx.moveTo(c.r*0.5,c.r*0.25); ctx.lineTo(c.r*1.1,c.r*0.35); ctx.stroke();
+  ctx.restore();
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  ctx.save();
+  if(S.shake>0) ctx.translate((Math.random()-.5)*S.shake, (Math.random()-.5)*S.shake);
+  // faint office carpet pattern
+  ctx.fillStyle='rgba(255,255,255,.03)';
+  for(let x=0;x<W;x+=40) for(let y=0;y<H;y+=40) if((x+y)/40%2===0) ctx.fillRect(x,y,40,40);
+  // goal box
+  ctx.fillStyle='#3a2a5a'; ctx.strokeStyle='#ffd166'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.roundRect(BOX.x-6,BOX.y-6,BOX.w+12,BOX.h+12,12); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#ffd166'; ctx.font='bold 13px Courier New'; ctx.textAlign='center';
+  ctx.fillText('CAT BOX', BOX.x+BOX.w/2, BOX.y+BOX.h+26);
+  ctx.font='11px Courier New'; ctx.fillStyle='rgba(255,209,102,.6)';
+  ctx.fillText('🏠 put cats here', BOX.x+BOX.w/2, BOX.y+BOX.h+42);
+
+  if(S.running){
+    S.cats.forEach(drawCat);
+    // mouse repel radius
+    ctx.strokeStyle='rgba(255,255,255,.08)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(mouse.x,mouse.y,REPEL,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,5,0,Math.PI*2); ctx.fill();
+  }
+  // particles
+  S.particles = S.particles.filter(p=>{ p.x+=p.vx; p.y+=p.vy; p.vy+=0.08; p.life-=0.03;
+    ctx.globalAlpha=p.life; ctx.fillStyle=p.col; ctx.fillRect(p.x,p.y,4,4); ctx.globalAlpha=1; return p.life>0; });
+  // floats
+  S.floats = S.floats.filter(f=>{ f.y-=0.7; f.life-=0.012;
+    ctx.globalAlpha=Math.max(0,f.life); ctx.fillStyle=f.col; ctx.font='bold '+f.size+'px Courier New'; ctx.textAlign='center';
+    ctx.fillText(f.txt,f.x,f.y); ctx.globalAlpha=1; return f.life>0; });
+  ctx.restore();
+
+  // HUD
+  if(S.running){
+    ctx.fillStyle='#fff'; ctx.font='bold 18px Courier New'; ctx.textAlign='left';
+    ctx.fillText('SCORE '+S.score, 14, 26);
+    ctx.textAlign='right'; ctx.fillText('WAVE '+S.wave+'  🐱 left: '+S.cats.length, W-14, 26);
+    if(S.paused){ ctx.fillStyle='rgba(20,10,35,.6)'; ctx.fillRect(0,0,W,H);
+      ctx.fillStyle='#ffd166'; ctx.font='bold 34px Courier New'; ctx.textAlign='center'; ctx.fillText('PAUSED 😼', W/2, H/2); }
+  }
+}
+
+function loop(){
+  S.t++;
+  if(S.shake>0) S.shake*=0.9;
+  if(S.running && !S.paused){
+    S.cats.forEach(steer);
+    if(S.phone){ bossUpdate(); }
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+function bossUpdate(){
+  const p=S.phone; p.t++; p.y+=p.vy; p.x=W/2+Math.sin(p.t*0.02)*W*0.35;
+  // eats cats she touches
+  for(let i=S.cats.length-1;i>=0;i--){ const c=S.cats[i];
+    if(Math.hypot(c.x-p.x,c.y-p.y)<c.r+p.r){ S.cats.splice(i,1); burst(c.x,c.y,'#ff4757',14); float(c.x,c.y,'BURP 💀','#ff6b81',16); } }
+  if(p.y>H+60) S.phone=null;
+}
+// boss draw (override part of draw via flag): drawn in draw() when present
+const origDraw = draw;
+function draw2(){ origDraw(); if(S.running && S.phone){ const p=S.phone; ctx.save(); ctx.translate(p.x,p.y);
+  ctx.rotate(Math.sin(p.t*0.05)*0.1);
+  ctx.fillStyle='#222'; ctx.beginPath(); ctx.ellipse(0,0,p.r,p.r*0.85,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#222'; ctx.beginPath(); ctx.moveTo(-p.r*0.5,-p.r*0.5); ctx.lineTo(-p.r*0.7,-p.r*1.2); ctx.lineTo(-p.r*0.1,-p.r*0.8); ctx.closePath();
+  ctx.moveTo(p.r*0.5,-p.r*0.5); ctx.lineTo(p.r*0.7,-p.r*1.2); ctx.lineTo(p.r*0.1,-p.r*0.8); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#ff4757'; ctx.beginPath(); ctx.arc(-p.r*0.3,-p.r*0.2,3,0,Math.PI*2); ctx.arc(p.r*0.3,-p.r*0.2,3,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#eee'; ctx.font='bold 11px Courier New'; ctx.textAlign='center'; ctx.fillText('CHONK',0,p.r+16);
+  ctx.restore(); } }
+draw = draw2;
+window.__game = S; // debug/testing hook
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

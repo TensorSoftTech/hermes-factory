@@ -1,0 +1,137 @@
+{
+  "id": "software-company",
+  "name": "Software Company",
+  "orchestratorRoleId": "ceo",
+  "rooms": [
+    {
+      "id": "ceo-suite",
+      "label": "CEO Suite",
+      "origin": [1, 1],
+      "size": [4, 3],
+      "floor": "#e8dfd2"
+    },
+    {
+      "id": "leadership",
+      "label": "Leadership",
+      "origin": [6, 1],
+      "size": [5, 3],
+      "floor": "#e4dccf"
+    },
+    {
+      "id": "eng-bay",
+      "label": "Eng Bay",
+      "origin": [1, 5],
+      "size": [10, 5],
+      "floor": "#ddd8cf"
+    }
+  ],
+  "desks": [
+    { "id": "desk-ceo", "room": "ceo-suite", "tile": [2, 2] },
+    { "id": "desk-cto", "room": "leadership", "tile": [7, 2] },
+    { "id": "desk-coo", "room": "leadership", "tile": [9, 2] },
+    { "id": "desk-swe", "room": "eng-bay", "tile": [2, 7] },
+    { "id": "desk-swe-2", "room": "eng-bay", "tile": [4, 7] },
+    { "id": "desk-arch", "room": "eng-bay", "tile": [6, 7] },
+    { "id": "desk-qa", "room": "eng-bay", "tile": [8, 7] }
+  ],
+  "roles": [
+    {
+      "id": "ceo",
+      "title": "CEO",
+      "department": "Leadership",
+      "hermesProfile": "default",
+      "skin": "#c62828",
+      "hair": "#212121",
+      "desk": "desk-ceo",
+      "home": [2, 2],
+      "description": "Sets company direction, takes board goals, and delegates to the right lead.",
+      "takesOrdersFrom": null,
+      "reportsTo": null,
+      "roleKind": "orchestrator"
+    },
+    {
+      "id": "cto",
+      "title": "CTO",
+      "department": "Leadership",
+      "hermesProfile": "default",
+      "skin": "#1565c0",
+      "hair": "#37474f",
+      "desk": "desk-cto",
+      "home": [7, 2],
+      "description": "Owns technical strategy, stack choices, and engineering standards.",
+      "takesOrdersFrom": "ceo",
+      "reportsTo": "ceo",
+      "roleKind": "manager"
+    },
+    {
+      "id": "coo",
+      "title": "COO",
+      "department": "Leadership",
+      "hermesProfile": "default",
+      "skin": "#ef6c00",
+      "hair": "#4e342e",
+      "desk": "desk-coo",
+      "home": [9, 2],
+      "description": "Runs delivery rhythm, hiring ops, and cross-team process.",
+      "takesOrdersFrom": "ceo",
+      "reportsTo": "ceo",
+      "roleKind": "manager"
+    },
+    {
+      "id": "swe",
+      "title": "Software Engineer",
+      "department": "Engineering",
+      "hermesProfile": "default",
+      "skin": "#2e7d32",
+      "hair": "#1b5e20",
+      "desk": "desk-swe",
+      "home": [2, 7],
+      "description": "Implements features, fixes bugs, and ships working code.",
+      "takesOrdersFrom": "cto",
+      "reportsTo": "qa",
+      "roleKind": "executor"
+    },
+    {
+      "id": "swe-2",
+      "title": "Software Engineer II",
+      "department": "Engineering",
+      "hermesProfile": "default",
+      "skin": "#43a047",
+      "hair": "#1b5e20",
+      "desk": "desk-swe-2",
+      "home": [4, 7],
+      "description": "Owns services, refactors, and pairs on delivery with the other engineers.",
+      "takesOrdersFrom": "cto",
+      "reportsTo": "qa",
+      "roleKind": "executor"
+    },
+    {
+      "id": "architect",
+      "title": "Software Architect",
+      "department": "Engineering",
+      "hermesProfile": "analyst",
+      "skin": "#546e7a",
+      "hair": "#263238",
+      "desk": "desk-arch",
+      "home": [6, 7],
+      "description": "Designs system shape, boundaries, and long-term technical structure.",
+      "takesOrdersFrom": "cto",
+      "reportsTo": "qa",
+      "roleKind": "executor"
+    },
+    {
+      "id": "qa",
+      "title": "QA",
+      "department": "Quality",
+      "hermesProfile": "analyst",
+      "skin": "#00838f",
+      "hair": "#004d40",
+      "desk": "desk-qa",
+      "home": [8, 7],
+      "description": "Defines acceptance criteria, finds regressions, and gates releases.",
+      "takesOrdersFrom": "cto",
+      "reportsTo": "cto",
+      "roleKind": "evaluator"
+    }
+  ]
+}

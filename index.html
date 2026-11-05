@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Hermes Factory</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/office.css" />
+</head>
+<body>
+  <main id="factory" class="factory">
+    <header class="factory__top">
+      <div class="factory__brand">
+        <span class="factory__logo">HF</span>
+        <div>
+          <p class="factory__name">Hermes Factory</p>
+          <p class="factory__template" id="template-label">Software Company</p>
+        </div>
+      </div>
+      <div id="session-stats" class="session-stats" aria-label="Session stats">
+        <span data-stat="calls">calls <b>0</b></span>
+        <span data-stat="tok-in">in <b>0</b></span>
+        <span data-stat="tok-out">out <b>0</b></span>
+        <span data-stat="tasks">tasks <b>0</b></span>
+      </div>
+      <div class="factory__actions">
+        <span id="factory-busy" class="factory__busy" hidden>Hermes running…</span>
+        <button type="button" id="btn-settings" class="btn-ghost" onclick="window.hermesFactoryOpenSettings && window.hermesFactoryOpenSettings()">Settings</button>
+      </div>
+    </header>
+
+    <div id="mission-root" class="mission" hidden aria-live="polite"></div>
+
+    <div class="factory__grid">
+      <aside class="panel left" aria-label="Roster and API history">
+        <div class="left__block">
+          <h2 class="panel__title">Employees</h2>
+          <p class="feed__hint">Talks to Hermes profiles (not models directly)</p>
+          <ul id="roster-list" class="roster__list"></ul>
+        </div>
+        <div class="left__block left__block--api">
+          <h2 class="panel__title">Hermes runs</h2>
+          <p class="feed__hint">Each run is a Hermes profile · click for details</p>
+          <ol id="api-history" class="api-history"></ol>
+        </div>
+      </aside>
+
+      <section class="office-stage" aria-label="Factory office">
+        <div class="office-scroll">
+          <canvas id="office-canvas" width="960" height="780"></canvas>
+          <div id="speech-layer" class="speech-layer" aria-hidden="true"></div>
+          <aside id="employee-card" class="employee-card" hidden>
+            <header class="employee-card__head">
+              <div>
+                <p class="employee-card__title" data-emp="title">—</p>
+                <p class="employee-card__sub" data-emp="sub">—</p>
+              </div>
+              <button type="button" id="employee-card-close" class="btn-ghost employee-card__close" aria-label="Close">✕</button>
+            </header>
+            <p class="employee-card__desc" data-emp="desc"></p>
+            <dl class="employee-card__stats">
+              <div><dt>Tasks</dt><dd data-emp="tasks">0</dd></div>
+              <div><dt>Calls</dt><dd data-emp="calls">0</dd></div>
+              <div><dt>Tokens in</dt><dd data-emp="tok-in">0</dd></div>
+              <div><dt>Tokens out</dt><dd data-emp="tok-out">0</dd></div>
+              <div><dt>OK / err</dt><dd data-emp="ok-err">0 / 0</dd></div>
+              <div><dt>Avg latency</dt><dd data-emp="latency">—</dd></div>
+            </dl>
+            <p class="employee-card__hint">Recent Hermes runs</p>
+            <ol class="employee-card__recent" data-emp="recent"></ol>
+          </aside>
+        </div>
+      </section>
+
+      <aside class="panel side" aria-label="Feed and usage">
+        <div class="side__block">
+          <h2 class="panel__title">Profile usage</h2>
+          <div id="usage-table" class="usage"></div>
+        </div>
+        <div class="side__block side__block--feed">
+          <h2 class="panel__title">Live feed</h2>
+          <p class="feed__hint">Board ↔ Hermes profiles along the org chart</p>
+          <ol id="feed-list" class="feed__list"></ol>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="command" aria-label="Talk and assign tasks">
+      <div class="command__modes" role="tablist">
+        <button type="button" id="chat-mode-btn" class="command__mode is-active" data-mode="chat" role="tab" aria-selected="true">
+          Talk to board target
+        </button>
+        <button type="button" class="command__mode" data-mode="task" role="tab" aria-selected="false">
+          Assign task
+        </button>
+      </div>
+
+      <form id="chat-form" class="command__form" data-panel="chat">
+        <p id="chat-hint" class="command__hint">Board → orchestrator. They reply, then delegate to people who take orders from them.</p>
+        <div class="command__row">
+          <label class="sr-only" for="chat-input">Message to board target</label>
+          <input id="chat-input" type="text" maxlength="2000" placeholder="Tell the board target what you want…" autocomplete="off" />
+          <button type="submit" class="btn-cta btn-cta--sm">Send</button>
+        </div>
+      </form>
+
+      <form id="task-form" class="command__form" data-panel="task" hidden>
+        <p class="command__hint">Assign work to a role — runs that role’s Hermes profile.</p>
+        <div class="command__row command__row--task">
+          <label class="sr-only" for="task-assignee">Assignee</label>
+          <select id="task-assignee"></select>
+          <label class="sr-only" for="task-input">Task</label>
+          <input id="task-input" type="text" maxlength="2000" placeholder="Task title…" autocomplete="off" />
+          <button type="submit" class="btn-cta btn-cta--sm">Assign</button>
+        </div>
+      </form>
+    </footer>
+  </main>
+
+  <div id="board-reply-overlay" class="board-reply-overlay" aria-hidden="true">
+    <div class="board-reply" role="dialog" aria-modal="true" aria-labelledby="board-reply-title">
+      <h2 id="board-reply-title" class="board-reply__title">Respond to the board</h2>
+      <p class="board-reply__hint">CEO delivery report — reply as the board (or give the next order).</p>
+      <pre id="board-reply-report" class="board-reply__report"></pre>
+      <label class="sr-only" for="board-reply-input">Your reply</label>
+      <textarea id="board-reply-input" class="settings__input settings__textarea board-reply__input" rows="4" placeholder="Board reply / next instruction…"></textarea>
+      <div class="board-reply__foot">
+        <button type="button" id="board-reply-cancel" class="btn-ghost">Dismiss</button>
+        <button type="button" id="board-reply-send" class="btn-cta btn-cta--sm">Send to CEO</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settings-overlay" class="settings-overlay" aria-hidden="true">
+    <div class="settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <header class="settings__head">
+        <h2 id="settings-title" class="settings__title">Settings</h2>
+        <button type="button" id="settings-close" class="btn-ghost">Close</button>
+      </header>
+
+      <p id="settings-status" class="settings__status"></p>
+
+      <div class="settings__body">
+        <section class="settings__section settings__section--colors">
+          <h3 class="settings__h">1. Colors</h3>
+          <p class="settings__help">Light and dark palettes — pick one here (applies immediately). Office tiles follow the palette.</p>
+          <div id="settings-themes" class="theme-grid" role="listbox" aria-label="Color palettes"></div>
+        </section>
+
+        <section class="settings__section">
+          <h3 class="settings__h">2. Avatar style</h3>
+          <p class="settings__help">How employees look on the floor — Robots, Aliens, Minecraft, Dinosaurs, Gummy bears.</p>
+          <div id="settings-avatars" class="avatar-style-grid" role="listbox" aria-label="Avatar styles"></div>
+        </section>
+
+        <section class="settings__section">
+          <h3 class="settings__h">3. Hermes</h3>
+          <label class="settings__label" for="settings-parent-profile">Parent / default profile</label>
+          <select id="settings-parent-profile" class="settings__select"></select>
+          <label class="settings__label" for="settings-hermes-bin">Hermes binary</label>
+          <input id="settings-hermes-bin" class="settings__input" type="text" placeholder="~/.local/bin/hermes" />
+          <button type="button" id="settings-refresh-profiles" class="btn-ghost settings__refresh">Refresh profiles</button>
+        </section>
+
+        <section class="settings__section">
+          <h3 class="settings__h">4. Company template</h3>
+          <p class="settings__help">Stored in <code>~/.hermes-factory/templates/</code>. Edit positions, clone companies, map Hermes profiles.</p>
+          <label class="settings__label" for="settings-template">Active template</label>
+          <select id="settings-template" class="settings__select"></select>
+          <label class="settings__label" for="settings-template-name">Display name</label>
+          <input id="settings-template-name" class="settings__input" type="text" />
+          <label class="settings__label" for="settings-orchestrator">Board talks to</label>
+          <select id="settings-orchestrator" class="settings__select"></select>
+          <p class="settings__help">Orchestrator is start + end. Graph: manager → executor → QC → manager (again: more executor work <em>or</em> report up to orchestrator).</p>
+          <div class="settings__row">
+            <button type="button" id="settings-clone-template" class="btn-ghost">Clone as new</button>
+            <button type="button" id="settings-delete-template" class="btn-ghost">Delete template</button>
+          </div>
+        </section>
+
+        <section class="settings__section">
+          <h3 class="settings__h">5. Positions</h3>
+          <p class="settings__help">Set <strong>role kind</strong> (orchestrator / manager / executor / evaluator), Hermes profile, and who they take orders from / report to. Evaluators sit between executors and managers.</p>
+          <div class="settings__add">
+            <input id="settings-new-title" class="settings__input" type="text" placeholder="New position (e.g. DevOps)" />
+            <input id="settings-new-dept" class="settings__input" type="text" placeholder="Department" />
+            <button type="button" id="settings-add-role" class="btn-cta btn-cta--sm">Add position</button>
+          </div>
+          <div id="settings-roles" class="settings__roles"></div>
+        </section>
+      </div>
+
+      <footer class="settings__foot">
+        <button type="button" id="settings-cancel" class="btn-ghost">Cancel</button>
+        <button type="button" id="settings-save" class="btn-cta btn-cta--sm">Save &amp; apply</button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="call-overlay" class="call-overlay" aria-hidden="true">
+    <div class="call-detail" role="dialog" aria-modal="true" aria-labelledby="call-detail-title">
+      <header class="call-detail__head">
+        <div>
+          <h2 id="call-detail-title" class="call-detail__title" data-call="title">API call</h2>
+          <p class="call-detail__meta" data-call="meta"></p>
+          <p class="call-detail__latency" data-call="latency"></p>
+        </div>
+        <button type="button" id="call-detail-close" class="btn-ghost">Close</button>
+      </header>
+
+      <nav class="call-detail__tabs" role="tablist">
+        <button type="button" class="call-detail__tab is-active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+        <button type="button" class="call-detail__tab" data-tab="prompt" role="tab" aria-selected="false">Prompt</button>
+        <button type="button" class="call-detail__tab" data-tab="reply" role="tab" aria-selected="false">Response</button>
+        <button type="button" class="call-detail__tab" data-tab="headers" role="tab" aria-selected="false">Headers</button>
+        <button type="button" class="call-detail__tab" data-tab="usage" role="tab" aria-selected="false">Usage / raw</button>
+      </nav>
+
+      <div class="call-detail__panels">
+        <section class="call-detail__panel is-active" data-panel="overview">
+          <h3 class="call-detail__h">Command</h3>
+          <pre class="call-detail__pre" data-call="cmd"></pre>
+          <h3 class="call-detail__h">Stderr</h3>
+          <pre class="call-detail__pre call-detail__pre--muted" data-call="stderr"></pre>
+        </section>
+        <section class="call-detail__panel" data-panel="prompt" hidden>
+          <pre class="call-detail__pre" data-call="prompt"></pre>
+        </section>
+        <section class="call-detail__panel" data-panel="reply" hidden>
+          <pre class="call-detail__pre" data-call="reply"></pre>
+        </section>
+        <section class="call-detail__panel" data-panel="headers" hidden>
+          <h3 class="call-detail__h">Request headers</h3>
+          <pre class="call-detail__pre" data-call="req-headers"></pre>
+          <h3 class="call-detail__h">Response headers</h3>
+          <pre class="call-detail__pre" data-call="res-headers"></pre>
+        </section>
+        <section class="call-detail__panel" data-panel="usage" hidden>
+          <h3 class="call-detail__h">Hermes usage file</h3>
+          <pre class="call-detail__pre" data-call="usage"></pre>
+          <h3 class="call-detail__h">Full bridge payload</h3>
+          <pre class="call-detail__pre call-detail__pre--muted" data-call="raw"></pre>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js?v=bubble-click-4"></script>
+</body>
+</html>
