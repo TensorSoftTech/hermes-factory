@@ -7,8 +7,8 @@ import {
   syncRosterStatus,
 } from "./comms.js?v=waiting-bubble-1";
 import { createStats } from "./stats.js?v=state-history-1";
-import { createMission } from "./mission.js?v=mission-sync-1";
-import { createCommand } from "./command.js?v=gate-allow-1";
+import { createMission } from "./mission.js?v=ceo-deliver-1";
+import { createCommand } from "./command.js?v=ceo-deliver-1";
 import { createSettings } from "./settings.js?v=profile-sync-1";
 import {
   listTemplates,

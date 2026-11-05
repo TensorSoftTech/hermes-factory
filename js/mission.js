@@ -412,14 +412,16 @@ export function createMission({
     ensureDom();
   }
 
-  function markStep(roleId, { status, taskState, note } = {}) {
+  function markStep(roleId, { status, taskState, note, rollUp = true } = {}) {
     if (!mission) return;
     const step = mission.steps.find((s) => s.id === roleId);
     if (step) {
       if (status) step.status = status;
       if (taskState) {
         step.taskState = taskState;
-        mission.taskState = taskState;
+        // Pings must pass rollUp:false — otherwise TASK_STATE: done closes the
+        // mission without a CEO board DELIVERED report.
+        if (rollUp) mission.taskState = taskState;
       }
       if (note) step.note = note;
     }
@@ -586,9 +588,9 @@ export function createMission({
   }
 
   function isOpen() {
+    // Stay open until CEO board delivery — taskState "done" alone is not enough
     if (!mission || mission.delivered || mission.paused) return false;
-    const st = mission.taskState || "pending";
-    return OPEN_STATES.has(st) || st !== "done";
+    return true;
   }
 
   function isPaused() {

@@ -343,12 +343,16 @@ function ceoVerifyDeliverPrompt(
   path,
   profileId
 ) {
+  const boardDone = rolledState === "done";
   return [
     `You are the ${role.title}, the board contact.`,
     `Hermes profile: ${profileId || role.hermesProfile || "default"}.`,
     orgLine(template, role),
     ``,
     `Your org rolled up TASK_STATE: ${rolledState}.`,
+    boardDone
+      ? `Factory kanban shows ALL subtasks done — you must close this out to the board now.`
+      : ``,
     `Original board request:`,
     boardMessage,
     ``,
@@ -361,11 +365,15 @@ function ceoVerifyDeliverPrompt(
     `- Call out gaps, risks, or follow-ups`,
     ``,
     `Write a board delivery report (4-8 sentences): verification + what / where / who / outcome.`,
-    `If it is NOT truly finished, keep it open (in_progress or blocked) — do not fake done.`,
+    boardDone
+      ? `The factory board is finished. End with TASK_STATE: done and DELIVERED: yes unless a critical gap remains.`
+      : `If it is NOT truly finished, keep it open (in_progress or blocked) — do not fake done.`,
     `End with exactly these two lines:`,
     `TASK_STATE: <pending|in_progress|blocked|done>`,
     `DELIVERED: <yes|no>`,
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function parseDelivered(text) {
@@ -626,11 +634,12 @@ export function createCommand(ctx) {
     getMission()?.setNextPing?.(null);
   }
 
-  function scheduleProgressPing() {
+  function scheduleProgressPing(delayMs = PROGRESS_PING_MS) {
     clearProgressPing();
     const mission = getMission?.();
     if (!mission?.isOpen?.()) return;
-    const at = Date.now() + PROGRESS_PING_MS;
+    const wait = Math.max(500, Number(delayMs) || PROGRESS_PING_MS);
+    const at = Date.now() + wait;
     mission.setNextPing?.(at);
     pingTimer = setTimeout(() => {
       pingTimer = null;
@@ -638,16 +647,38 @@ export function createCommand(ctx) {
         console.error("[progress-ping]", err);
         scheduleProgressPing();
       });
-    }, PROGRESS_PING_MS);
+    }, wait);
   }
 
-  function settleMission(state, { held = false } = {}) {
+  function factoryBoardComplete() {
+    const cards = (getKanban()?.snapshot?.() || []).filter(
+      (c) => c && c.kind !== "main"
+    );
+    if (!cards.length) return false;
+    return cards.every((c) => c.status === "done");
+  }
+
+  function settleMission(state, { held = false, report = "" } = {}) {
     const mission = getMission?.();
     if (!mission) return;
-    if (!held && state === "done") {
+    // Never mark delivered without a board report — CEO must DELIVERED: yes
+    if (!held && state === "done" && report) {
       clearProgressPing();
       stopFloorSync();
+      recordDelivered(report);
       mission.setDelivered(state);
+      return;
+    }
+    if (!held && state === "done" && factoryBoardComplete()) {
+      // Cards finished but no report yet — keep open and force CEO delivery next
+      mission.setOpen("done");
+      startFloorSync();
+      scheduleProgressPing(2_000);
+      try {
+        syncFloorPositions();
+      } catch {
+        /* ignore */
+      }
       return;
     }
     mission.setOpen(state || "in_progress");
@@ -751,6 +782,16 @@ export function createCommand(ctx) {
       maybeKickReadyWork();
       scheduleProgressPing();
       return { resumed: true, delivered: false, title: m.title || "", kicked: true };
+    }
+    // Cards all done but CEO never reported — force a delivery ping soon
+    if (factoryBoardComplete() && !m.delivered) {
+      scheduleProgressPing(1500);
+      return {
+        resumed: true,
+        delivered: false,
+        title: m.title || "",
+        needsBoardReport: true,
+      };
     }
     const active = m.activeId;
     if (active) getAgents()?.setStatus?.(active, "working");
@@ -2569,8 +2610,10 @@ export function createCommand(ctx) {
         const wantsDeliver = parseDelivered(reply);
         rolledState = state;
         rolledReply = reply;
-        // Require explicit DELIVERED: yes after verification
-        deliveredOk = state === "done" && wantsDeliver === true;
+        // Require explicit DELIVERED: yes; if factory board is finished, allow yes
+        deliveredOk =
+          wantsDeliver === true &&
+          (state === "done" || factoryBoardComplete());
 
         pushEdge(
           startId,
@@ -2581,6 +2624,7 @@ export function createCommand(ctx) {
           status: deliveredOk ? "reported" : "active",
           taskState: state,
           note: deliveredOk ? "Verified board report" : "Verification — still open",
+          rollUp: true,
         });
         agents.setStatus(startId, "idle");
       }
@@ -2787,6 +2831,7 @@ export function createCommand(ctx) {
           status: state === "done" ? "done" : state === "blocked" ? "hold" : "queued",
           taskState: state,
           note: `ping: ${reply.slice(0, 120)}`,
+          rollUp: false, // never flip mission to done from a ping alone
         });
         pushEdge(orchId || "system", t.id, `[ping · ${state}] ${reply}`);
         if (hasKanban) {
@@ -2859,8 +2904,9 @@ export function createCommand(ctx) {
         }
       }
 
-      // If agents claim done, CEO must verify and send the board report
-      if (latest === "done") {
+      // Board finished (all factory cards done) OR agents claim done → CEO must report
+      const boardDone = factoryBoardComplete();
+      if (latest === "done" || boardDone) {
         const orch =
           getTemplate()?.orchestratorRoleId || lastPathRoles[0]?.id;
         if (orch) {
@@ -2868,23 +2914,33 @@ export function createCommand(ctx) {
           const meta = roleProfileMeta(orch);
           mission.ensureStep(meta);
           mission.setActive(orch, "verify");
-          pushEdge(orch, "you", `CEO verifying & preparing board report…`);
+          pushEdge(
+            orch,
+            "you",
+            boardDone
+              ? `All factory cards done — CEO board report required`
+              : `CEO verifying & preparing board report…`
+          );
           const { reply } = await runRole(
             orch,
             ceoVerifyDeliverPrompt(
               template,
               { ...topRole, ...meta },
               lastBoardMessage || m.title,
-              latest,
+              boardDone ? "done" : latest,
               pingPath,
               meta.hermesProfile
             ),
             { isTask: true, signal }
           );
-          const state = parseTaskState(reply, latest);
+          const state = parseTaskState(reply, boardDone ? "done" : latest);
           const wantsDeliver = parseDelivered(reply);
           latest = state;
-          const deliveredOk = state === "done" && wantsDeliver === true;
+          // If every factory card is done, accept DELIVERED: yes even if model
+          // hedges TASK_STATE — board work is finished; CEO must close it out.
+          const deliveredOk =
+            wantsDeliver === true &&
+            (state === "done" || boardDone);
           pushEdge(
             orch,
             "you",
@@ -2896,13 +2952,22 @@ export function createCommand(ctx) {
             note: deliveredOk
               ? "Verified board report"
               : "Verification — still open",
+            rollUp: true,
           });
           agents.setStatus(orch, "idle");
           if (deliveredOk) {
+            lastBoardReport = reply;
             clearProgressPing();
             recordDelivered(reply);
-            mission.setDelivered(state);
+            mission.setDelivered("done");
             return;
+          }
+          if (boardDone && wantsDeliver !== true) {
+            pushEdge(
+              orch,
+              "you",
+              `Factory board is 100% done — CEO must end with DELIVERED: yes on the next ping`
+            );
           }
         }
       }
