@@ -37,6 +37,8 @@ export function createSettings({ getState, onApply, isBusy }) {
   const parentSelect = document.getElementById("settings-parent-profile");
   const rolesEl = document.getElementById("settings-roles");
   const hermesBinEl = document.getElementById("settings-hermes-bin");
+  const workspaceEl = document.getElementById("settings-workspace");
+  const orchestrationEl = document.getElementById("settings-orchestration");
   const templateNameEl = document.getElementById("settings-template-name");
   const orchSelect = document.getElementById("settings-orchestrator");
   const addRoleBtn = document.getElementById("settings-add-role");
@@ -568,6 +570,11 @@ export function createSettings({ getState, onApply, isBusy }) {
       if (templateSelect) templateSelect.value = selected;
       fillProfileSelect(parentSelect, draftParentProfile);
       if (hermesBinEl) hermesBinEl.value = source.hermesBin || "";
+      if (workspaceEl) workspaceEl.value = source.workspacePath || "";
+      if (orchestrationEl) {
+        orchestrationEl.value =
+          source.orchestration === "client" ? "client" : "server";
+      }
       loadTemplateIntoEditor(selected);
       const body = overlay.querySelector(".settings__body");
       if (body) body.scrollTop = 0;
@@ -603,6 +610,9 @@ export function createSettings({ getState, onApply, isBusy }) {
       templateId: draftTemplate.id,
       parentProfile: parentSelect?.value || "default",
       hermesBin: hermesBinEl?.value?.trim() || undefined,
+      workspacePath: workspaceEl?.value?.trim() || undefined,
+      orchestration:
+        orchestrationEl?.value === "client" ? "client" : "server",
       roleProfiles,
       orchestratorRoleId: draftTemplate.orchestratorRoleId,
       themeId: draftThemeId || DEFAULT_THEME_ID,

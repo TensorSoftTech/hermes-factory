@@ -6,10 +6,11 @@ import {
   renderRoster,
   syncRosterStatus,
 } from "./comms.js?v=waiting-bubble-1";
-import { createStats } from "./stats.js?v=state-history-1";
+import { createStats } from "./stats.js?v=hermes-runs-click-1";
 import { createMission } from "./mission.js?v=ceo-deliver-1";
-import { createCommand } from "./command.js?v=ceo-deliver-1";
-import { createSettings } from "./settings.js?v=profile-sync-1";
+import { createCommand } from "./command.js?v=hermes-runs-click-1";
+import { createSettings } from "./settings.js?v=workspace-1";
+import { createEventBus } from "./events.js?v=server-orch-1";
 import {
   listTemplates,
   getTemplate,
@@ -40,6 +41,8 @@ const state = {
     templateId: "software-company",
     parentProfile: "default",
     roleProfiles: {},
+    orchestration: "server",
+    workspacePath: "",
   },
   profiles: [],
   template: null,
@@ -286,7 +289,12 @@ function openEmployeeCard(agentId) {
         const kind = entry.isTask ? "task" : "chat";
         li.textContent = `#${entry.id} ${kind} · in ${entry.tokensIn} · out ${entry.tokensOut} · ${state.stats.formatMs(entry.latencyMs)}`;
         li.title = "Open full call";
-        li.addEventListener("click", () => state.stats?.openDetail?.(entry.id));
+        li.style.cursor = "pointer";
+        li.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          state.stats?.openDetail?.(entry.id);
+        });
         recentEl.appendChild(li);
       }
     }
@@ -401,6 +409,7 @@ function wireCallDetail(stats) {
   if (!overlay || !stats) return;
 
   function openOverlay() {
+    overlay.hidden = false;
     overlay.classList.add("is-open");
     overlay.setAttribute("aria-hidden", "false");
   }
@@ -615,6 +624,17 @@ python3 server/bridge.py</pre>
     throw new Error("Mount produced no employees");
   }
   restorePersisted(savedState);
+  if ((settings.orchestration || "server") !== "client") {
+    createEventBus({
+      onEvent: (msg) => {
+        try {
+          command.applyServerEvent?.(msg);
+        } catch (err) {
+          console.error("[ws]", err);
+        }
+      },
+    });
+  }
   document.getElementById("chat-input")?.focus();
 }
 

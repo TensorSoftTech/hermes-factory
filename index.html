@@ -168,6 +168,14 @@
           <select id="settings-parent-profile" class="settings__select"></select>
           <label class="settings__label" for="settings-hermes-bin">Hermes binary</label>
           <input id="settings-hermes-bin" class="settings__input" type="text" placeholder="~/.local/bin/hermes" />
+          <label class="settings__label" for="settings-workspace">Default workspace</label>
+          <input id="settings-workspace" class="settings__input" type="text" placeholder="~/.hermes-factory/workspace" spellcheck="false" />
+          <p class="settings__help">Absolute path under your home. All Hermes oneshots run with this as cwd. Created if missing.</p>
+          <label class="settings__label" for="settings-orchestration">Orchestration</label>
+          <select id="settings-orchestration" class="settings__select">
+            <option value="server">Server (recommended)</option>
+            <option value="client">Browser (legacy)</option>
+          </select>
           <button type="button" id="settings-refresh-profiles" class="btn-ghost settings__refresh">Refresh profiles</button>
         </section>
 
@@ -300,6 +308,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/app.js?v=ceo-deliver-1"></script>
+  <script type="module" src="js/app.js?v=hermes-runs-click-1"></script>
 </body>
 </html>

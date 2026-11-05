@@ -83,7 +83,7 @@ Model/provider come from the Hermes profile at runtime — do not hardcode fakes
 
 ## Seed / API
 
-- Bundled seed: [`server/seed/software-company.json`](../../../server/seed/software-company.json) (copied once into `~/.hermes-factory/templates/`).
+- Bundled seed: [`server/seed/software-company.json`](../../server/seed/software-company.json) (copied once into `~/.hermes-factory/templates/`).
 - `POST /api/templates` `{ "name", "cloneFrom" }`
 - `PUT /api/templates/<id>` full document (org chart normalized)
 - `DELETE /api/templates/<id>` (not `software-company`)

@@ -1,17 +1,68 @@
 # Hermes Factory
 
-Company of Hermes **template positions** — isometric office UI on **real** Nous Hermes profiles. Templates and positions are editable and stored on disk.
+> **WIP** — usable local factory UI + Python orchestration harness. Expect rough edges (long oneshots, dual client/server orch paths, inspector wiring). Not a multi-user/remote product.
+
+Company of Hermes **template positions** — isometric office UI on **real** Hermes profiles. You message the board (CEO); the company plans on a factory kanban, works at desks, QA’s, and delivers back. Templates and positions are editable and stored on disk.
 
 **State of truth = the template.** Profile usage, floor status, mission steps, and the factory kanban all track **roles** (`swe`, `architect`, …). Each role runs via that role’s mapped Hermes profile (`settings.roleProfiles` → e.g. `sparky`). Do not treat role ids as Hermes profile names, and do not use Hermes Agent’s external kanban for factory work.
+
+### TODO
+
+- [ ] Drop legacy browser `runOrgChain` once server orch is the only path
+- [ ] Surface hung Hermes oneshots (timeout / cancel) instead of “ACTIVE” forever
+- [ ] Stream every server `hermes_run` into left **Hermes runs** (prompt · response) after bridge restart
+- [ ] Server-side resume after refresh (ready kick / ping) without client timers
+- [ ] Optional per-mission workspace: `workspacePath/<missionId>/`
+- [ ] Tighten Settings → workspace “Open folder” + clearer 402 / wrong-profile hints
+- [ ] Trim `command.js` to a thin WS client; keep office / graph / kanban UI
+
+## Showcase
+
+![Hermes Factory office — mission bar, employees, Hermes runs, profile usage](docs/showcase.jpg)
+
+A live Software Company run: CEO briefed the board ask, CTO owns the kanban (9 tasks), roles move through **Done / Active / Waiting / Queued**, green **waiting…** bubbles mark dep-blocked desks, and the left **Hermes runs** list shows real `sparky` oneshots you can open for prompt · response · headers.
+
+### What you need
+
+| Need | Notes |
+|------|--------|
+| **Hermes CLI** | Installed and on your PATH (default `~/.local/bin/hermes`) |
+| **Hermes profiles** | At least one under `~/.hermes` (e.g. `sparky` / local model — avoid silent `default`/Nous if you want local AI) |
+| **Python 3.9+** | For the FastAPI bridge (`pip3 install -r server/requirements.txt`) |
+| **Browser** | Open the local UI at `http://127.0.0.1:8787` |
+| **Workspace folder** | Absolute path under your home (Settings → Default workspace); all agent cwd work stays there |
+
+Optional: clone/edit the company template in Settings (roles, org lines, avatar style, palette).
+
+### How to use it
+
+1. **Start the bridge** (see [Run](#run) below) and open the UI.
+2. **Settings** — set **parent profile** (e.g. `sparky`), **Hermes binary**, and **workspace**. Save & apply.
+3. **Talk to CEO** — type a board ask in the dock (“Message the CEO profile…”) and Send.
+4. **Watch the floor** — CEO delegates → CTO plans MAIN + SUB cards → ready roles work at desks; blocked roles show **waiting…** (click the bubble for the task).
+5. **Kanban** — click the floor **KANBAN** table to inspect MAIN / columns / deps for a manager.
+6. **Hermes runs** (left) — click a run for prompt, response, headers, usage.
+7. **Office / Graph** — toggle the stage view; mission bar groups Done / Active / Waiting / Queued.
+8. **When finished** — CEO must end with board delivery (`DELIVERED: yes`). Use **History** for past deliveries; **Stop & remove** to abort and clear.
+
+Recovery pings (~90s) nudge managers while a mission is open. Orchestration runs on the server by default.
 
 ## Run
 
 ```bash
 cd hermes-factory
+pip3 install -r server/requirements.txt
 python3 server/bridge.py
+# or: cd server && python3 -m factory
 ```
 
 Open [http://127.0.0.1:8787](http://127.0.0.1:8787).
+
+Orchestration (kanban waves, ping, CEO `DELIVERED`) runs in the **Python FastAPI harness** by default (`settings.orchestration = "server"`). Factory state lives in `~/.hermes-factory/factory.db`; Hermes oneshots use `settings.workspacePath` as cwd. UI listens on `/ws/events`.
+
+```bash
+cd hermes-factory/server && python3 -m pytest tests/ -q
+```
 
 ## Settings → palette, templates & positions
 
@@ -21,7 +72,8 @@ Open **Settings**:
 |--------|--------|
 | **Color palette** | Colors section (office tiles follow the palette) |
 | **Avatar style** | Robots · Aliens · Minecraft · Dinosaurs · Gummy bears |
-| Pick Hermes parent profile / binary | Hermes section |
+| Pick Hermes parent profile / binary / **workspace** | Hermes section |
+| **Orchestration** | Server (recommended) or legacy browser |
 | Switch company template | Active template |
 | Rename template | Display name |
 | **Board talks to** | Orchestrator / board chat target (usually CEO) |

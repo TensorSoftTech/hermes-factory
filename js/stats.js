@@ -260,11 +260,35 @@ export function createStats(template, { onRecord = null } = {}) {
   }
 
   function getById(id) {
-    return history.find((e) => e.id === Number(id));
+    const n = Number(id);
+    return history.find((e) => Number(e.id) === n);
+  }
+
+  let historyRoot = null;
+  let historyDelegateBound = false;
+
+  function ensureHistoryDelegate(el) {
+    if (!el || historyDelegateBound) return;
+    historyDelegateBound = true;
+    historyRoot = el;
+    el.addEventListener("click", (ev) => {
+      const li = ev.target?.closest?.(".api-history__item");
+      if (!li || !el.contains(li)) return;
+      ev.preventDefault();
+      openDetail(li.dataset.id);
+    });
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const li = ev.target?.closest?.(".api-history__item");
+      if (!li || !el.contains(li)) return;
+      ev.preventDefault();
+      openDetail(li.dataset.id);
+    });
   }
 
   function renderHistory(el) {
     if (!el) return;
+    ensureHistoryDelegate(el);
     el.innerHTML = "";
     if (!history.length) {
       const empty = document.createElement("p");
@@ -311,16 +335,6 @@ export function createStats(template, { onRecord = null } = {}) {
       hint.textContent = "Click for prompt · response · headers";
 
       li.append(top, route, tokens, hint);
-
-      const open = () => openDetail(entry.id);
-      li.addEventListener("click", open);
-      li.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter" || ev.key === " ") {
-          ev.preventDefault();
-          open();
-        }
-      });
-
       el.appendChild(li);
     }
   }
@@ -399,9 +413,17 @@ export function createStats(template, { onRecord = null } = {}) {
 
   function openDetail(id) {
     const entry = getById(id);
-    if (!entry) return;
+    if (!entry) {
+      console.warn("[stats] openDetail: no entry for id", id);
+      return false;
+    }
+    if (!detailEl || !onOpenDetail) {
+      console.warn("[stats] openDetail: call overlay not wired");
+      return false;
+    }
     fillDetail(entry);
-    onOpenDetail?.(entry);
+    onOpenDetail(entry);
+    return true;
   }
 
   function closeDetail() {

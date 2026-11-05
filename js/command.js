@@ -612,6 +612,91 @@ export function createCommand(ctx) {
   /** Role ids currently driven by an in-flight factory Hermes call. */
   const liveApiRoles = new Set();
 
+  function isServerOrch() {
+    return (getSettings()?.orchestration || "server") !== "client";
+  }
+
+  async function postMission(message) {
+    const res = await fetch("/api/missions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.error || data.detail || `mission HTTP ${res.status}`);
+    }
+    return data;
+  }
+
+  /** Apply a server WebSocket event to local UI mirrors. */
+  function applyServerEvent(msg) {
+    if (!msg || typeof msg !== "object") return;
+    const { event, payload } = msg;
+    if (event === "hello" && payload?.state) {
+      if (Array.isArray(payload.state.kanban)) {
+        getKanban()?.restore?.(payload.state.kanban);
+      }
+      if (payload.state.mission) {
+        getMission()?.restore?.(payload.state.mission);
+      }
+      return;
+    }
+    if (event === "mission" && payload) {
+      getMission()?.restore?.(payload);
+      return;
+    }
+    if (event === "kanban" && payload) {
+      const cards = payload.cards || payload;
+      if (Array.isArray(cards)) getKanban()?.restore?.(cards);
+      try {
+        syncFloorPositions?.();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+    if (event === "feed" && payload) {
+      getComms()?.pushFeed?.(payload);
+      const edges = getEdgeEvents?.();
+      if (Array.isArray(edges)) edges.push(payload);
+      return;
+    }
+    if (event === "agent" && payload?.roleId) {
+      const agents = getAgents();
+      if (!agents) return;
+      if (payload.status) agents.setStatus?.(payload.roleId, payload.status);
+      if (payload.status === "working") {
+        const a = agents.byId?.(payload.roleId);
+        const dest = a ? deskTile?.(a.desk) || a.home : null;
+        if (dest) agents.walkTo?.(payload.roleId, dest, getOffice?.());
+      }
+      return;
+    }
+    if (event === "busy") {
+      setBusy(Boolean(payload?.busy));
+      return;
+    }
+    if (event === "hermes_run" && payload?.roleId) {
+      recordFromResult(payload.roleId, payload.prompt || "", payload, {
+        isTask: Boolean(payload.isTask),
+        ok: payload.ok !== false,
+      });
+      return;
+    }
+    if (event === "state" && payload) {
+      if (Array.isArray(payload.kanban)) getKanban()?.restore?.(payload.kanban);
+      if (payload.mission) getMission()?.restore?.(payload.mission);
+      return;
+    }
+    if (event === "course_changed") {
+      getMission()?.clear?.();
+      getKanban()?.clearAll?.();
+      parkAgentsHome();
+      setBusy(false);
+    }
+  }
+
   function courseError() {
     return Object.assign(new Error("Board changed course"), {
       code: "COURSE_CHANGED",
@@ -635,6 +720,11 @@ export function createCommand(ctx) {
   }
 
   function scheduleProgressPing(delayMs = PROGRESS_PING_MS) {
+    // Server owns the ping loop when orchestration=server
+    if (isServerOrch()) {
+      clearProgressPing();
+      return;
+    }
     clearProgressPing();
     const mission = getMission?.();
     if (!mission?.isOpen?.()) return;
@@ -754,6 +844,15 @@ export function createCommand(ctx) {
     // Clear sticky pinging from a prior tab that died mid-call
     mission.setPinging?.(false);
     setBusy(false);
+    // Server owns resume / ping after reload
+    if (isServerOrch()) {
+      try {
+        syncFloorPositions();
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
     if (m.delivered) {
       const orchId = lastOrchId || getTemplate()?.orchestratorRoleId;
       if (orchId && lastBoardReport) {
@@ -2684,6 +2783,28 @@ export function createCommand(ctx) {
     const agents = getAgents();
     agents.clearBubble?.(orchId);
     pushEdge("you", orchId, `Board reply: ${msg}`);
+    if (isServerOrch()) {
+      setBusy(true);
+      try {
+        const composed = [
+          lastBoardMessage
+            ? `Previous board request:\n${lastBoardMessage}\n`
+            : "",
+          lastBoardReport
+            ? `CEO’s last report to the board:\n${lastBoardReport}\n`
+            : "",
+          `Board reply / next order:\n${msg}`,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        lastBoardMessage = composed;
+        await postMission(composed);
+        return true;
+      } catch (err) {
+        pushEdge(orchId, "you", `Hermes error: ${err.message || err}`);
+        return null;
+      }
+    }
     setBusy(true);
     try {
       await runOrgChain({
@@ -2999,6 +3120,20 @@ export function createCommand(ctx) {
     const orch = template.orchestratorRoleId || "ceo";
 
     pushEdge("you", orch, text);
+    lastBoardMessage = text;
+    lastOrchId = orch;
+    if (isServerOrch()) {
+      setBusy(true);
+      try {
+        await postMission(text);
+      } catch (err) {
+        const msg = err.message || String(err);
+        pushEdge(orch, "you", `Hermes error: ${msg}`);
+        getAgents()?.setStatus(orch, "blocked");
+        setBusy(false);
+      }
+      return;
+    }
     setBusy(true);
     try {
       await runOrgChain({
@@ -3037,6 +3172,19 @@ export function createCommand(ctx) {
     pushEdge("you", assigneeId, `TASK: ${text}`);
     const dest = deskTile(assignee.desk) || assignee.home;
     if (dest) agents.walkTo(assigneeId, dest, getOffice?.() || office);
+
+    if (isServerOrch()) {
+      setBusy(true);
+      try {
+        await postMission(`Direct task for ${assigneeId}: ${text}`);
+      } catch (err) {
+        const msg = err.message || String(err);
+        pushEdge(assigneeId, "you", `Hermes error: ${msg}`);
+        agents.setStatus(assigneeId, "blocked");
+        setBusy(false);
+      }
+      return;
+    }
 
     setBusy(true);
     try {
@@ -3086,6 +3234,9 @@ export function createCommand(ctx) {
     clearProgressPing();
     stopFloorSync();
     liveApiRoles.clear();
+    if (isServerOrch()) {
+      fetch("/api/missions/abort", { method: "POST" }).catch(() => {});
+    }
     getMission()?.pause?.();
     parkAgentsHome();
     setBusy(false);
@@ -3115,6 +3266,9 @@ export function createCommand(ctx) {
     lastBoardReport = "";
     lastOrchId = null;
     lastPathRoles = [];
+    if (isServerOrch()) {
+      fetch("/api/missions/stop", { method: "POST" }).catch(() => {});
+    }
     getMission()?.clear?.();
     try {
       getKanban()?.clearAll?.();
@@ -3142,5 +3296,7 @@ export function createCommand(ctx) {
     changeCourse,
     resetTasks: changeCourse,
     syncFloorPositions,
+    applyServerEvent,
+    isServerOrch,
   };
 }
