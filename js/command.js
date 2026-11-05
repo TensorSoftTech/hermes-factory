@@ -3244,8 +3244,38 @@ export function createCommand(ctx) {
       pushEdge(
         "you",
         "system",
-        "Board paused the task — dock is free for a new order."
+        "Board paused the task — dock is free. Hit Resume when ready."
       );
+    }
+  }
+
+  /** Unpause — continue the same mission (pings / ready desk work). */
+  function resumeTask({ quiet = false } = {}) {
+    const mission = getMission?.();
+    if (!mission?.isPaused?.()) return;
+    if (isServerOrch()) {
+      fetch("/api/missions/resume", { method: "POST" }).catch((err) => {
+        console.error("[resume]", err);
+      });
+    }
+    mission.unpause?.();
+    setBusy(false);
+    try {
+      syncFloorPositions();
+    } catch {
+      /* ignore */
+    }
+    if (!isServerOrch()) {
+      startFloorSync();
+      scheduleProgressPing(1500);
+      try {
+        maybeKickReadyWork?.();
+      } catch {
+        /* ignore */
+      }
+    }
+    if (!quiet) {
+      pushEdge("you", "system", "Board resumed the task.");
     }
   }
 
@@ -3293,6 +3323,7 @@ export function createCommand(ctx) {
     restoreContext,
     resumeAfterReload,
     pauseTask,
+    resumeTask,
     changeCourse,
     resetTasks: changeCourse,
     syncFloorPositions,

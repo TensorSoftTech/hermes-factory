@@ -78,6 +78,28 @@ class Orchestrator:
         self._busy = False
         events.publish("mission", m)
 
+    def resume(self) -> dict[str, Any]:
+        """Unpause — keep kanban/mission; restart recovery pings + ready kicks."""
+        m = store.get_mission()
+        if not m:
+            return {"ok": False, "error": "no mission"}
+        if m.get("delivered"):
+            return {"ok": False, "error": "already delivered"}
+        m["paused"] = False
+        m["pinging"] = False
+        m["phase"] = "open"
+        m["taskState"] = m.get("taskState") or "in_progress"
+        m["activity"] = None
+        store.save_mission(m)
+        events.publish("mission", m)
+        self._chain_abort = False
+        self._ping_abort = False
+        self._busy = False
+        # Soon: managers check open cards / kick ready todos
+        self._schedule_ping(1_500)
+        self._edge("you", "system", "Board resumed the task — pings and desk work continue.")
+        return {"ok": True}
+
     def _clear_ping_timer(self) -> None:
         if self._ping_timer:
             self._ping_timer.cancel()

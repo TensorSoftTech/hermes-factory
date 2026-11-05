@@ -6,6 +6,7 @@ export function createMission({
   rootEl,
   onChange = null,
   onPause = null,
+  onResume = null,
   onStop = null,
   getKanban = null,
 } = {}) {
@@ -22,6 +23,7 @@ export function createMission({
       setNextPing() {},
       setPinging() {},
       pause() {},
+      unpause() {},
       clear() {},
       restore() {},
       getState: () => null,
@@ -38,6 +40,7 @@ export function createMission({
     if (!btn || !rootEl.contains(btn)) return;
     const act = btn.dataset.missionAct;
     if (act === "pause") onPause?.();
+    else if (act === "resume") onResume?.();
     else if (act === "stop" || act === "remove") onStop?.();
   });
 
@@ -128,13 +131,19 @@ export function createMission({
       stopBtn.textContent = "Stop & remove";
       actions.append(pauseBtn, stopBtn);
     } else if (mission.paused) {
+      const resumeBtn = document.createElement("button");
+      resumeBtn.type = "button";
+      resumeBtn.className = "btn-cta btn-cta--sm mission__act";
+      resumeBtn.dataset.missionAct = "resume";
+      resumeBtn.title = "Resume this run — pings and desk work continue";
+      resumeBtn.textContent = "Resume";
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
       removeBtn.className = "btn-ghost mission__act";
       removeBtn.dataset.missionAct = "remove";
       removeBtn.title = "Remove the paused task";
       removeBtn.textContent = "Remove";
-      actions.append(removeBtn);
+      actions.append(resumeBtn, removeBtn);
     } else if (mission.delivered) {
       const dismissBtn = document.createElement("button");
       dismissBtn.type = "button";
@@ -151,7 +160,7 @@ export function createMission({
     active.className = "mission__active";
     if (mission.paused) {
       active.textContent =
-        "Paused — dock is free. Send a new order anytime, or Remove this task.";
+        "Paused — dock is free. Hit Resume to continue, or Remove this task.";
     } else if (mission.pinging) {
       const step = mission.steps.find((s) => s.id === mission.activeId);
       const prof = step ? profileLine(step) : "";
@@ -554,6 +563,19 @@ export function createMission({
     mission.activeId = null;
     stopTick();
     ensureDom();
+    notify();
+  }
+
+  /** Clear pause — mission is open again (pings / waves can continue). */
+  function unpause() {
+    if (!mission || mission.delivered || !mission.paused) return;
+    mission.paused = false;
+    mission.pinging = false;
+    mission.phase = "open";
+    mission.taskState = mission.taskState || "in_progress";
+    ensureDom();
+    startTick();
+    notify();
   }
 
   function clear() {
@@ -611,6 +633,7 @@ export function createMission({
     setNextPing,
     setPinging,
     pause,
+    unpause,
     clear,
     restore,
     getState: () => mission,

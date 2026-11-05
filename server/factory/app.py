@@ -278,6 +278,15 @@ def mission_abort() -> Dict[str, Any]:
     return {"ok": True, "action": "pause"}
 
 
+@app.post("/api/missions/resume")
+def mission_resume() -> Dict[str, Any]:
+    """Unpause — keep kanban; restart pings / ready work."""
+    result = get_orchestrator().resume()
+    if not result.get("ok"):
+        raise HTTPException(409, result.get("error") or "cannot resume")
+    return {**result, "action": "resume"}
+
+
 @app.post("/api/missions/stop")
 def mission_stop() -> Dict[str, Any]:
     """Stop & remove — clear mission + kanban."""

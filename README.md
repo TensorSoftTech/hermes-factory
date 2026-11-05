@@ -28,11 +28,12 @@ A live Software Company run: CEO briefed the board ask, CTO owns the kanban (9 t
 |------|--------|
 | **Hermes CLI** | Installed and on your PATH (default `~/.local/bin/hermes`) |
 | **Hermes profiles** | At least one under `~/.hermes` (e.g. `sparky` / local model — avoid silent `default`/Nous if you want local AI) |
+| **Model auth** | **No API key in Hermes Factory.** Keys / providers live in the Hermes profile (`~/.hermes`, `auth.json` / profile config). Factory only runs `hermes -p <profile> -z …` |
 | **Python 3.9+** | For the FastAPI bridge (`pip3 install -r server/requirements.txt`) |
 | **Browser** | Open the local UI at `http://127.0.0.1:8787` |
 | **Workspace folder** | Absolute path under your home (Settings → Default workspace); all agent cwd work stays there |
 
-Optional: clone/edit the company template in Settings (roles, org lines, avatar style, palette).
+Optional: clone/edit the company template in Settings (roles, org lines, avatar style, palette). If a run hits **HTTP 402 / Nous credits**, the call used cloud Nous — set Settings **parent profile** to your local profile (e.g. `sparky`) and Save.
 
 ### How to use it
 

@@ -7,8 +7,8 @@ import {
   syncRosterStatus,
 } from "./comms.js?v=waiting-bubble-1";
 import { createStats } from "./stats.js?v=hermes-runs-click-1";
-import { createMission } from "./mission.js?v=ceo-deliver-1";
-import { createCommand } from "./command.js?v=hermes-runs-click-1";
+import { createMission } from "./mission.js?v=resume-1";
+import { createCommand } from "./command.js?v=resume-1";
 import { createSettings } from "./settings.js?v=workspace-1";
 import { createEventBus } from "./events.js?v=server-orch-1";
 import {
@@ -103,6 +103,10 @@ state.mission = createMission({
   onChange: () => persist.saveLater(),
   onPause: () => {
     command.pauseTask?.();
+    persist.saveLater();
+  },
+  onResume: () => {
+    command.resumeTask?.();
     persist.saveLater();
   },
   onStop: () => {
