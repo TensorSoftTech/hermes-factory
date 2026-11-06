@@ -9,7 +9,7 @@ Company of Hermes **template positions** — isometric office UI on **real** Her
 ### TODO
 
 - [ ] Drop legacy browser `runOrgChain` once server orch is the only path
-- [ ] Surface hung Hermes oneshots (timeout / cancel) instead of “ACTIVE” forever
+- [x] Surface hung Hermes oneshots (timeout / cancel) instead of “ACTIVE” forever
 - [ ] Stream every server `hermes_run` into left **Hermes runs** (prompt · response) after bridge restart
 - [ ] Server-side resume after refresh (ready kick / ping) without client timers
 - [ ] Optional per-mission workspace: `workspacePath/<missionId>/`
@@ -47,6 +47,8 @@ Optional: clone/edit the company template in Settings (roles, org lines, avatar 
 8. **When finished** — CEO must end with board delivery (`DELIVERED: yes`). Use **History** for past deliveries; **Stop & remove** to abort and clear.
 
 Recovery pings (~90s) nudge managers while a mission is open. Orchestration runs on the server by default.
+
+**Troubleshoot oneshots:** Factory runs a single `hermes -z` at a time (mutex). Desk work defaults to `hermesTimeoutSec=900`; recovery pings use `hermesPingTimeoutSec=180` (both in `~/.hermes-factory/settings.json`). Empty “timed out after Ns” means the Factory subprocess budget, not that Hermes is down — raise the setting for slow local models. After 3 consecutive oneshot failures the mission auto-pauses (clear ACTIVE / mid-desk cards); **Resume** when ready. HTTP **402** = cloud Nous credits / wrong parent profile, not a timeout.
 
 ## Run
 

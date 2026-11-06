@@ -24,6 +24,7 @@ from ..settings import load_settings
 from . import org
 
 PROGRESS_PING_MS = 90_000
+FAIL_STREAK_PAUSE = 3
 
 _orch: "Orchestrator | None" = None
 _orch_lock = threading.Lock()
@@ -44,10 +45,13 @@ class Orchestrator:
         self._chain_abort = False
         self._ping_abort = False
         self._ping_timer: threading.Timer | None = None
+        self._kick_timer: threading.Timer | None = None
         self._run_id = 0
         self._last_board = ""
         self._last_report = ""
         self._path: list[dict] = []
+        self._fail_streak = 0
+        self._pending_kicks: list[str] = []
 
     @property
     def busy(self) -> bool:
@@ -58,6 +62,9 @@ class Orchestrator:
         self._chain_abort = True
         self._ping_abort = True
         self._clear_ping_timer()
+        self._clear_kick_timer()
+        self._pending_kicks = []
+        self._fail_streak = 0
         store.clear_cards()
         store.save_mission(None)
         self._busy = False
@@ -69,14 +76,20 @@ class Orchestrator:
         self._chain_abort = True
         self._ping_abort = True
         self._clear_ping_timer()
+        self._clear_kick_timer()
+        self._pending_kicks = []
         m = store.get_mission() or {}
         m["paused"] = True
         m["pinging"] = False
         m["activeId"] = None
+        m["activity"] = None
         m["phase"] = "paused"
+        m["nextPingAt"] = None
         store.save_mission(m)
+        self._unstick_doing_cards("paused — was doing")
         self._busy = False
         events.publish("mission", m)
+        events.publish("busy", {"busy": False})
 
     def resume(self) -> dict[str, Any]:
         """Unpause — keep kanban/mission; restart recovery pings + ready kicks."""
@@ -95,6 +108,7 @@ class Orchestrator:
         self._chain_abort = False
         self._ping_abort = False
         self._busy = False
+        self._fail_streak = 0
         # Soon: managers check open cards / kick ready todos
         self._schedule_ping(1_500)
         self._edge("you", "system", "Board resumed the task — pings and desk work continue.")
@@ -104,6 +118,11 @@ class Orchestrator:
         if self._ping_timer:
             self._ping_timer.cancel()
             self._ping_timer = None
+
+    def _clear_kick_timer(self) -> None:
+        if self._kick_timer:
+            self._kick_timer.cancel()
+            self._kick_timer = None
 
     def _schedule_ping(self, delay_ms: int = PROGRESS_PING_MS) -> None:
         self._clear_ping_timer()
@@ -122,11 +141,91 @@ class Orchestrator:
                 self.run_progress_ping()
             except Exception as err:  # noqa: BLE001
                 self._edge("system", "you", f"Ping error: {err}")
-                self._schedule_ping()
+                self._schedule_ping(self._ping_backoff_ms())
 
         self._ping_timer = threading.Timer(max(0.5, delay_ms / 1000), _fire)
         self._ping_timer.daemon = True
         self._ping_timer.start()
+
+    def _ping_backoff_ms(self) -> int:
+        n = max(0, self._fail_streak - 1)
+        return min(300_000, PROGRESS_PING_MS * (2**n))
+
+    def _note_hermes_ok(self) -> None:
+        self._fail_streak = 0
+
+    def _note_hermes_fail(self) -> bool:
+        """Bump fail streak; auto-pause after FAIL_STREAK_PAUSE. Returns True if paused."""
+        self._fail_streak += 1
+        if self._fail_streak < FAIL_STREAK_PAUSE:
+            return False
+        self._edge(
+            "system",
+            "you",
+            f"Factory paused after {FAIL_STREAK_PAUSE} consecutive Hermes oneshot failures. Resume when ready.",
+        )
+        self.pause()
+        return True
+
+    def _clear_activity(self) -> None:
+        m = store.get_mission() or {}
+        m["activity"] = None
+        m["activeId"] = None
+        store.save_mission(m)
+        events.publish("mission", m)
+
+    def _unstick_doing_cards(self, note: str) -> None:
+        changed = False
+        for c in store.list_cards():
+            if c.get("status") != "doing":
+                continue
+            store.patch_card(c["id"], {"status": "todo", "note": note})
+            changed = True
+        if changed:
+            events.publish("kanban", {"cards": store.list_cards()})
+
+    def _schedule_desk_kicks(self, manager_ids: list[str], delay_ms: int = 500) -> None:
+        """Run ready desk kicks after ping releases busy — not interleaved with CEO/CTO oneshots."""
+        pending = [mid for mid in manager_ids if mid]
+        if not pending:
+            return
+        self._pending_kicks = list(dict.fromkeys(pending))
+        self._clear_kick_timer()
+
+        def _fire() -> None:
+            self._kick_timer = None
+            managers = list(self._pending_kicks)
+            self._pending_kicks = []
+            m = store.get_mission()
+            if not m or m.get("delivered") or m.get("paused"):
+                return
+            if self._busy:
+                self._schedule_desk_kicks(managers, 2_000)
+                return
+            self._busy = True
+            events.publish("busy", {"busy": True})
+            try:
+                template = self._template()
+                for mid in managers:
+                    if self._ping_abort or (store.get_mission() or {}).get("paused"):
+                        break
+                    try:
+                        self._kick_ready(template, mid)
+                    except Exception as err:  # noqa: BLE001
+                        self._edge(mid, "you", f"START failed: {err}")
+                if self._all_subs_done() and not (store.get_mission() or {}).get("paused"):
+                    self._ceo_deliver(
+                        self._run_id,
+                        template,
+                        self._last_board or m.get("title") or "",
+                    )
+            finally:
+                self._busy = False
+                events.publish("busy", {"busy": False})
+
+        self._kick_timer = threading.Timer(max(0.2, delay_ms / 1000), _fire)
+        self._kick_timer.daemon = True
+        self._kick_timer.start()
 
     def _edge(self, src: str, dst: str, text: str) -> None:
         edge = {"from": src, "to": dst, "text": text, "ts": time.time()}
@@ -148,10 +247,22 @@ class Orchestrator:
             raise RuntimeError("No template loaded")
         return tmpl
 
-    def _role_turn(self, role_id: str, prompt: str) -> dict[str, Any]:
+    def _role_timeout(self, kind: str) -> int:
+        settings = load_settings()
+        key = "hermesPingTimeoutSec" if kind == "ping" else "hermesTimeoutSec"
+        default = 180 if kind == "ping" else 900
+        try:
+            return max(30, int(settings.get(key) or default))
+        except (TypeError, ValueError):
+            return default
+
+    def _role_turn(
+        self, role_id: str, prompt: str, *, kind: str = "desk"
+    ) -> dict[str, Any]:
         settings = load_settings()
         template = self._template()
         profile = org.profile_for_role(template, settings, role_id)
+        timeout = self._role_timeout(kind)
         events.publish(
             "agent",
             {"roleId": role_id, "status": "working", "profile": profile},
@@ -168,7 +279,7 @@ class Orchestrator:
         store.save_mission(m)
         events.publish("mission", m)
 
-        result = run_hermes(profile, prompt)
+        result = run_hermes(profile, prompt, timeout=timeout)
         reply = result.get("reply") or ""
         events.publish(
             "agent",
@@ -212,7 +323,9 @@ class Orchestrator:
             },
         )
         if not result.get("ok"):
+            self._clear_activity()
             raise RuntimeError(result.get("error") or "Hermes failed")
+        self._note_hermes_ok()
         return result
 
     def _persist_cards(self, cards: list[dict]) -> None:
@@ -570,12 +683,12 @@ class Orchestrator:
             ]
         )
         try:
-            result = self._role_turn(rid, prompt)
+            result = self._role_turn(rid, prompt, kind="desk")
         except Exception as err:  # noqa: BLE001
             store.patch_card(
                 card["id"],
                 {
-                    "status": "blocked",
+                    "status": "todo",
                     "note": f"API/process failed — recovery ping to retry: {str(err)[:180]}",
                 },
             )
@@ -584,6 +697,7 @@ class Orchestrator:
             )
             self._edge(rid, manager_id, f"Failed: {err}")
             events.publish("kanban", {"cards": store.list_cards()})
+            self._note_hermes_fail()
             return {"id": rid, "cardId": card["id"], "failed": True, "reply": ""}
 
         reply = result["reply"]
@@ -783,6 +897,8 @@ class Orchestrator:
         m["pingCount"] = (m.get("pingCount") or 0) + 1
         store.save_mission(m)
         events.publish("mission", m)
+        kick_managers: list[str] = []
+        had_fail = False
         try:
             template = self._template()
             orch_id = template.get("orchestratorRoleId") or "ceo"
@@ -796,16 +912,22 @@ class Orchestrator:
                 }
             )
 
-            # Always ping orch; managers with open work
-            targets = [orch_id]
+            # Managers with open work first; skip orch spam when only mid-desk doing.
+            needs_orch = (
+                not manager_ids
+                or self._all_subs_done()
+                or any(c.get("status") in ("todo", "blocked") for c in open_cards)
+            )
+            targets: list[str] = []
             for mid in manager_ids:
                 if mid not in targets:
                     targets.append(mid)
+            if needs_orch and orch_id not in targets:
+                targets.insert(0, orch_id)
 
-            ping_path = []
             latest = m.get("taskState") or "in_progress"
             for tid in targets:
-                if self._ping_abort:
+                if self._ping_abort or (store.get_mission() or {}).get("paused"):
                     return
                 role = org.role_by_id(template, tid)
                 if not role:
@@ -843,9 +965,12 @@ class Orchestrator:
                 )
                 self._edge("system", tid, f"Ping → {tid}")
                 try:
-                    result = self._role_turn(tid, prompt)
+                    result = self._role_turn(tid, prompt, kind="ping")
                 except Exception as err:  # noqa: BLE001
+                    had_fail = True
                     self._edge(tid, "you", f"Ping failed: {err}")
+                    if self._note_hermes_fail():
+                        return
                     continue
                 reply = result["reply"]
                 state = parse_task_state(reply, latest)
@@ -858,7 +983,6 @@ class Orchestrator:
                     roll_up=False,
                 )
                 self._edge(orch_id, tid, f"[ping · {state}] {reply}")
-                ping_path.append({"id": tid, "reply": reply, "state": state})
 
                 if has_kanban:
                     directives = parse_kanban_directives(reply)
@@ -885,17 +1009,27 @@ class Orchestrator:
                             "you",
                             f"Kanban moves: {applied['moved']} · reopened {applied['reopened']}",
                         )
-                    # Auto-start ready todos
+                    # Desk kicks run after ping (separate busy window)
                     if directives.get("start") or ready_now:
-                        self._kick_ready(template, tid)
+                        kick_managers.append(tid)
 
+            if (store.get_mission() or {}).get("paused"):
+                return
             if self._all_subs_done() or latest == "done":
-                self._ceo_deliver(self._run_id, template, self._last_board or m.get("title") or "")
+                self._ceo_deliver(
+                    self._run_id, template, self._last_board or m.get("title") or ""
+                )
             else:
-                self._schedule_ping()
+                delay = self._ping_backoff_ms() if had_fail else PROGRESS_PING_MS
+                self._schedule_ping(delay)
+                if kick_managers:
+                    self._schedule_desk_kicks(kick_managers)
         finally:
             m2 = store.get_mission() or {}
             m2["pinging"] = False
+            if m2.get("paused"):
+                m2["activity"] = None
+                m2["activeId"] = None
             store.save_mission(m2)
             events.publish("mission", m2)
             self._busy = False

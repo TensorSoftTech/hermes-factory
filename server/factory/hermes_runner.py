@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -17,6 +18,9 @@ from .rules import resolve_run_profile
 from .settings import load_settings
 from .workspace import ensure_workspace
 
+# Single-flight: one factory hermes -z at a time (shared local model / profile).
+_HERMES_LOCK = threading.Lock()
+
 
 def run_hermes(
     profile: str | None,
@@ -24,7 +28,7 @@ def run_hermes(
     *,
     hermes_bin: str | None = None,
     workspace: str | None = None,
-    timeout: int = 300,
+    timeout: int | None = None,
 ) -> dict[str, Any]:
     settings = load_settings()
     bin_path = hermes_bin or settings.get("hermesBin") or HERMES_BIN
@@ -36,6 +40,13 @@ def run_hermes(
             profile_meta["provider"] = p.get("provider") or "unknown"
             profile_meta["model"] = p.get("model") or "unknown"
             break
+
+    if timeout is None:
+        try:
+            timeout = int(settings.get("hermesTimeoutSec") or 900)
+        except (TypeError, ValueError):
+            timeout = 900
+    timeout = max(30, int(timeout))
 
     ws = ensure_workspace(workspace or settings.get("workspacePath"))
     usage_path = Path(tempfile.gettempdir()) / f"hf-usage-{uuid.uuid4().hex}.json"
@@ -55,14 +66,15 @@ def run_hermes(
 
     started = time.time()
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(ws),
-            env={**os.environ, "TERM": "dumb"},
-        )
+        with _HERMES_LOCK:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                cwd=str(ws),
+                env={**os.environ, "TERM": "dumb"},
+            )
     except subprocess.TimeoutExpired:
         return {
             "ok": False,

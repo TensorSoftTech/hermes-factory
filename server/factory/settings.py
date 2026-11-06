@@ -22,6 +22,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "avatarStyle": "robot",
     "workspacePath": str(DEFAULT_WORKSPACE),
     "orchestration": "server",
+    # Desk / plan / QA oneshots (local models often need several minutes).
+    "hermesTimeoutSec": 900,
+    # Recovery ping oneshots — fail faster than desk work.
+    "hermesPingTimeoutSec": 180,
 }
 
 
@@ -48,6 +52,11 @@ def load_settings() -> dict[str, Any]:
         out["workspacePath"] = str(ensure_workspace(None))
     if out.get("orchestration") not in ("server", "client"):
         out["orchestration"] = "server"
+    for key, default in (("hermesTimeoutSec", 900), ("hermesPingTimeoutSec", 180)):
+        try:
+            out[key] = max(30, int(out.get(key) if out.get(key) is not None else default))
+        except (TypeError, ValueError):
+            out[key] = default
     return out
 
 
